@@ -86,6 +86,7 @@ int main() {
         mpz_swap(p, q);
     }
 
+    /* Export to OpenPGP format. */
     mpi_t *out[6];
     out[0] = openpgp_export(n);
     out[1] = openpgp_export(e);
@@ -106,12 +107,13 @@ int main() {
 
     /* Compute total packet size. */
     uint16_t total = 1 + 4 + 1; /* public header */
-    total += 1 + 2; /* secret header */
+    total += 1 + 2; /* secret header + checksum */
     for (i = 0; i < 6; i++) {
         total += out[i]->length;
     }
     total = htons(total);
 
+    /* Public-key packet */
     fputc(0x95, stdout); /* PTag (old format), two-octet length header */
     fwrite(&total, 2, 1, stdout); /* packet length */
     fputc(0x04, stdout); /* Packet version (4) */
@@ -123,6 +125,8 @@ int main() {
         /* Public key parts */
         fwrite(out[i]->buffer, out[i]->length, 1, stdout);
     }
+
+    /* Private-key packet */
     putc(0x00, stdout); /* Not encrypted. */
     for (i = 2; i < 6; i++) {
         /* Private key parts */
