@@ -1,8 +1,12 @@
 /* passpassphrase2pgp.c --- generate an RSA key from a passphrase
  *
- * gcc -lgcrypt -lgmp -o passpassphrase2pgp passphrase2pgp.c
+ * This is free and unencumbered software released into the public domain.
  *
- * OpenPGP format: http://tools.ietf.org/html/rfc4880
+ * Compile:
+ *   gcc -lgcrypt -lgmp -o passpassphrase2pgp passphrase2pgp.c
+ *
+ * Documentation:
+ *   http://tools.ietf.org/html/rfc4880
  */
 
 #include <stdio.h>
