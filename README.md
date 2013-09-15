@@ -41,3 +41,5 @@ For the actual key, generate 1024 bits for pre-p and another 1024 bits
 for pre-q, most-significant bit first. For both pre-p and pre-q,
 increment until the first prime number is found, calling them p and q.
 Then compute the rest of the RSA key from p and q.
+
+Currently missing is some sort of key stretching.
