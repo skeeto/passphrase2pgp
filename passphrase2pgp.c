@@ -59,21 +59,6 @@ mpi_t *openpgp_export(mpz_t n) {
 }
 
 int main() {
-    gcry_sexp_t parms, key;
-    gcry_sexp_build(&parms, NULL, "(genkey (rsa (nbits %d)))", 2048);
-    gcry_error_t err = gcry_pk_genkey(&key, parms);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "Key generation failed.\n");
-        exit(EXIT_FAILURE);
-    }
-    gcry_sexp_release(parms);
-    /* gcry_sexp_dump(key); */
-    /*gcry_sexp_t n = gcry_sexp_find_token(key, "n", 0);
-    size_t len;
-    const char *ndata = gcry_sexp_nth_data(n, 1, &len);*/
-    /*gcry_sexp_dump(n);*/
-    /* fwrite(ndata, len, 1, stdout); */
-
     char *passphrase = "hello";
     int nbits = 2048, nbytes = nbits / 8;
 
