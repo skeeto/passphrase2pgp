@@ -2,16 +2,20 @@
 
 The purpose of this tool is to generate RSA keys from a passphrase and
 output them in the [OpenPGP format](http://tools.ietf.org/html/rfc4880)
-to be imported into your own PGP software (GnuPG, etc).
+to be imported into your own PGP software (GnuPG, etc). The purpose is
+to allow PGP keys to be stored entirely in a human brain, like a Bitcoin
+brain wallet.
 
 I have no idea if this is a good idea or not. Can a reasonably
 human-memorable passphrase have enough entropy for a 2048-bit RSA key?
+Use at your own risk!
 
 ## Status
 
 It outputs a valid secret key packet and user ID packet, but no
 signature packet to bind them together, so GnuPG refuses to import it.
-Once the signature packet is in place I think it should be ready for us.
+Once the signature packet is in place I think it should be ready for
+use.
 
 ## Hash algorithm
 
