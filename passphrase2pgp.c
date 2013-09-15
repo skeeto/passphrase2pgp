@@ -86,9 +86,6 @@ int main() {
         mpz_swap(p, q);
     }
 
-    /* gmp_printf("n: %Zx\ne: %Zx\nd: %Zx\np: %Zx\nq: %Zx\nu: %Zx\n", */
-    /*            n, e, d, p, q, u); */
-
     mpi_t *out[6];
     out[0] = openpgp_export(n);
     out[1] = openpgp_export(e);
