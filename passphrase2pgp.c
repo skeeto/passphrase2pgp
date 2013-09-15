@@ -1,4 +1,8 @@
-/* http://tools.ietf.org/html/rfc4880
+/* passpassphrase2pgp.c --- generate an RSA key from a passphrase
+ *
+ * gcc -lgcrypt -lgmp -o passpassphrase2pgp passphrase2pgp.c
+ *
+ * OpenPGP format: http://tools.ietf.org/html/rfc4880
  */
 
 #include <stdio.h>
@@ -49,7 +53,7 @@ mpi_t *openpgp_export(mpz_t n) {
     mpi_t *mpi = malloc(sizeof(mpi_t));
     mpi->length = raw_length + 2;
     mpi->buffer = malloc(mpi->length);
-    uint16_t header = raw_length * 8;  /* XXX */
+    uint16_t header = raw_length * 8;
     header -= count_left_zeros(raw[0]);
     header = htons(header);
     memcpy(mpi->buffer, &header, 2);
@@ -60,6 +64,7 @@ mpi_t *openpgp_export(mpz_t n) {
 
 int main() {
     char *passphrase = "hello";
+    char *uid = "Hello World <foo.bar@example.com>";
     int nbits = 2048, nbytes = nbits / 8;
 
     mpz_t p, q, n, e, d, t, u;
@@ -122,17 +127,22 @@ int main() {
     fwrite(&seconds, 4, 1, stdout); /* current time */
     fputc(0x01, stdout); /* Algo (1) */
     for (i = 0; i < 2; i++) {
-        /* Public key parts */
         fwrite(out[i]->buffer, out[i]->length, 1, stdout);
     }
 
-    /* Private-key packet */
+    /* Private-key packet append */
     putc(0x00, stdout); /* Not encrypted. */
     for (i = 2; i < 6; i++) {
-        /* Private key parts */
         fwrite(out[i]->buffer, out[i]->length, 1, stdout);
     }
     fwrite(&checksum, 2, 1, stdout); /* Checksum */
+
+    /* UID packet */
+    putc(0xb4, stdout); /* PTag (old format), tag 13 */
+    putc(strlen(uid), stdout);
+    fwrite(uid, strlen(uid), 1, stdout);
+
+    /* Signature? */
 
     return EXIT_SUCCESS;
 }
