@@ -1,1 +1,1 @@
-    ./passphrase2pgp | gpg --import --allow-non-selfsigned-uid
+    ./passphrase2pgp | gpg --import

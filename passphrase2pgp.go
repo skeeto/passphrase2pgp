@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"errors"
 	"flag"
+	"fmt"
 	"math/bits"
 	"os"
+	"syscall"
 	"time"
 
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 // keylen returns the number of bits in a key, skipping leading zeros.
@@ -24,28 +30,63 @@ func keylen(k []byte) int {
 	return c
 }
 
-func main() {
-	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
-	now := flag.Bool("now", false, "use current time as creation date")
-	flag.Parse()
-
-	if *now {
-		*created = time.Now().Unix()
+// Returns data encoded as an OpenPGP multiprecision integer.
+func mpi(data []byte) []byte {
+	// Chop off leading zeros
+	for len(data) > 0 && data[0] == 0 {
+		data = data[1:]
 	}
-
-	seed := []byte{
-		0x1a, 0x8b, 0x1f, 0xf0, 0x5d, 0xed, 0x48, 0xe1,
-		0x8b, 0xf5, 0x01, 0x66, 0xc6, 0x64, 0xab, 0x02,
-		0x3e, 0xa7, 0x00, 0x03, 0xd7, 0x8d, 0x9e, 0x41,
-		0xf5, 0x75, 0x8a, 0x91, 0xd8, 0x50, 0xf8, 0xd2,
+	// Zero-length is a special case (should never actually happen)
+	if len(data) == 0 {
+		return []byte{0, 0}
 	}
+	c := len(data)*8 - bits.LeadingZeros8(data[0])
+	mpi := []byte{byte(c >> 8), byte(c >> 0)}
+	return append(mpi, data...)
+}
 
-	key := ed25519.NewKeyFromSeed(seed)
-	sec := key[:32]
-	pub := key[32:]
-	seclen := keylen(sec) // FIXME: chop leading zeros
+// Print the message like fmt.Printf() and then os.Exit(1).
+func fatal(format string, args ...interface{}) {
+	buf := bytes.NewBufferString("passphrase2pgp: ")
+	fmt.Fprintf(buf, format, args...)
+	buf.WriteRune('\n')
+	os.Stderr.Write(buf.Bytes())
+	os.Exit(1)
+}
 
-	// Secret-Key Packet
+// Read, confirm, and return a passphrase from the user.
+func readPassphrase(repeat int) ([]byte, error) {
+	prompt := []byte("passphrase: ")
+	tail := []byte("\n")
+	os.Stderr.Write(prompt)
+	passphrase, err := terminal.ReadPassword(int(syscall.Stdin))
+	if err != nil {
+		return nil, err
+	}
+	os.Stderr.Write(tail)
+	for i := 0; i < repeat; i++ {
+		os.Stderr.Write(prompt)
+		again, err := terminal.ReadPassword(int(syscall.Stdin))
+		if err != nil {
+			return nil, err
+		}
+		os.Stderr.Write(tail)
+		if !bytes.Equal(again, passphrase) {
+			return nil, errors.New("passphrases do not match")
+		}
+	}
+	return passphrase, nil
+}
+
+// Derive a 32-byte seed from the given passphrase.
+func kdf(passphrase []byte, time uint32) []byte {
+	var memory uint32 = 1024 * 1024 // 1 GB
+	var threads uint8 = 1
+	return argon2.IDKey(passphrase, nil, time, memory, threads, 32)
+}
+
+// Returns a Secret-Key Packet for a key pair.
+func newSecretKeyPacket(seckey, pubkey []byte, created int64) []byte {
 	packet := []byte{
 		0xc5, // packet header, new format, Secret-Key Packet (5)
 		0,    // packet length
@@ -53,10 +94,10 @@ func main() {
 
 		// Public Key
 		// creation date
-		byte(*created >> 24),
-		byte(*created >> 16),
-		byte(*created >> 8),
-		byte(*created >> 0),
+		byte(created >> 24),
+		byte(created >> 16),
+		byte(created >> 8),
+		byte(created >> 0),
 		22, // algorithm, EdDSA
 		9,  // OID length
 		// OID (1.3.6.1.4.1.11591.15.1)
@@ -70,40 +111,39 @@ func main() {
 
 		// Secret Key
 		0, // string-to-key, unencrypted
-		// secret key length
-		byte(seclen >> 8), byte(seclen >> 0),
-		// private key (32 bytes)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		// checksum
-		0, 0,
 	}
-	packet[1] = byte(len(packet) - 2)
-	copy(packet[21:53], pub)
-	copy(packet[56:88], sec)
+	copy(packet[21:53], pubkey)
+
+	// append MPI-encoded key
+	secmpi := mpi(seckey)
+	packet = append(packet, secmpi...)
+
+	// compute and append checksum
 	var checksum uint16
-	for _, b := range packet[54:88] {
+	for _, b := range secmpi {
 		checksum += uint16(b)
 	}
-	packet[88] = byte(checksum >> 8)
-	packet[89] = byte(checksum >> 0)
-	os.Stdout.Write(packet)
+	packet = append(packet, []byte{
+		byte(checksum >> 8), byte(checksum >> 0),
+	}...)
 
-	// User ID Packet
-	id := append([]byte{
-		0xcd, // packet header, new format, User ID Packet (13)
-		0,    // packet length
-	}, []byte("Foo Bar <foo.bar@example.com>")...)
-	id[1] = byte(len(id) - 2)
-	os.Stdout.Write(id)
+	packet[1] = byte(len(packet) - 2)
+	return packet
+}
 
-	// Compute the Key ID
-	h := sha1.New()
-	h.Write([]byte{0x99, 0, 51}) // "packet" length = 51
-	h.Write(packet[2:53])        // public key portion
-	keyid := h.Sum(nil)
+// Returns a User ID Packet for the given identity.
+func newUserIDPacket(uid string) []byte {
+	return append([]byte{
+		0xcd,           // packet header, new format, User ID Packet (13)
+		byte(len(uid)), // packet length
+	}, []byte(uid)...)
+}
 
-	// Signature Packet
+// Returns a Signature Packet binding a Secret-Key Packet and User ID Packet.
+func newSignaturePacket(key ed25519.PrivateKey, skpacket, idpacket []byte,
+	created int64) []byte {
+
+	keyid := keyid(skpacket)
 	sigpacket := []byte{
 		0xc2,  // packet header, new format, Signature Packet (2)
 		0,     // packet length
@@ -114,34 +154,26 @@ func main() {
 		0, 16, // hashed subpacket data length
 		// Signature Creation Time subpacket (length=5, type=2)
 		5, 2,
-		byte(*created >> 24),
-		byte(*created >> 16),
-		byte(*created >> 8),
-		byte(*created >> 0),
+		byte(created >> 24),
+		byte(created >> 16),
+		byte(created >> 8),
+		byte(created >> 0),
 		// Issuer subpacket (length=9, type=16)
 		9, 16,
 		0, 0, 0, 0, 0, 0, 0, 0,
 		0, 0, // no unhashed subpacket data
 		0, 0, // hash value preview
-		0, 0, // MPI bit length
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, // MPI bit length
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	}
-	sigpacket[1] = byte(len(sigpacket)) - 2
 
 	// Fill out Issuer subpacket
 	copy(sigpacket[16:24], keyid[12:])
 
 	// Compute digest to be signed
-	h = sha256.New()
+	h := sha256.New()
 	h.Write([]byte{0x99, 0, 51})
-	h.Write(packet[2:53]) // public key portion
+	h.Write(skpacket[2:53]) // public key portion
 	h.Write([]byte{0xb4, 0, 0, 0})
-	h.Write(id[1:])
-	//h.Write(sigpacket[8:24])
+	h.Write(idpacket[1:])
 	h.Write(sigpacket[2:24])              // trailer
 	h.Write([]byte{4, 0xff, 0, 0, 0, 22}) // final trailer
 	sigsum := h.Sum(nil)
@@ -153,15 +185,63 @@ func main() {
 
 	// Fill out signature
 	r := sig[:32]
-	rlen := keylen(r)
-	sigpacket[28] = byte(rlen >> 8)
-	sigpacket[29] = byte(rlen >> 0)
-	copy(sigpacket[30:62], r)
+	sigpacket = append(sigpacket, mpi(r)...)
 	m := sig[32:]
-	mlen := keylen(m)
-	sigpacket[62] = byte(mlen >> 8)
-	sigpacket[63] = byte(mlen >> 0)
-	copy(sigpacket[64:96], m)
+	sigpacket = append(sigpacket, mpi(m)...)
 
+	sigpacket[1] = byte(len(sigpacket)) - 2
+	return sigpacket
+}
+
+// Returns the Key ID from a Secret-Key Packet.
+func keyid(skpacket []byte) []byte {
+	h := sha1.New()
+	h.Write([]byte{0x99, 0, 51}) // "packet" length = 51
+	h.Write(skpacket[2:53])      // public key portion
+	return h.Sum(nil)
+}
+
+func main() {
+	uid := flag.String("uid", "", "key user ID (required)")
+	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
+	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
+	paranoid := flag.Bool("paranoid", false, "paranoid mode")
+	now := flag.Bool("now", false, "use current time as creation date")
+
+	flag.Parse()
+
+	if *uid == "" {
+		fatal("missing User ID (-uid) option")
+	}
+	if *now {
+		*created = time.Now().Unix()
+	}
+
+	// Derive a key from the passphrase
+	passphrase, err := readPassphrase(int(*repeat))
+	if err != nil {
+		fatal("%s", err)
+	}
+	var time uint32
+	if *paranoid {
+		time = 32
+	} else {
+		time = 8
+	}
+	seed := kdf(passphrase, time)
+	key := ed25519.NewKeyFromSeed(seed)
+	seckey := key[:32]
+	pubkey := key[32:]
+
+	// Secret-Key Packet
+	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
+	os.Stdout.Write(skpacket)
+
+	// User ID Packet
+	idpacket := newUserIDPacket(*uid)
+	os.Stdout.Write(idpacket)
+
+	// Signature Packet
+	sigpacket := newSignaturePacket(key, skpacket, idpacket, *created)
 	os.Stdout.Write(sigpacket)
 }
