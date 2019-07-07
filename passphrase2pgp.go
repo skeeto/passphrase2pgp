@@ -17,19 +17,6 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-// keylen returns the number of bits in a key, skipping leading zeros.
-// This is necessary for MPI encoding.
-func keylen(k []byte) int {
-	c := len(k) * 8
-	for _, b := range k {
-		c -= bits.LeadingZeros8(b)
-		if c != 0 {
-			break
-		}
-	}
-	return c
-}
-
 // Returns data encoded as an OpenPGP multiprecision integer.
 func mpi(data []byte) []byte {
 	// Chop off leading zeros
