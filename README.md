@@ -38,6 +38,8 @@ Just pipe the output straight into GnuPG:
         	paranoid mode
       -repeat uint
         	number of repeated passphrase prompts (default 1)
+      -sign-only
+        	don't output encryption subkey
       -uid string
         	key user ID (required)
 

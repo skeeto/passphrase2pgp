@@ -138,7 +138,7 @@ func newUserIDPacket(uid string) []byte {
 }
 
 // Returns a Signature Packet binding a Secret-Key Packet and User ID Packet.
-func newKeySignaturePacket(key ed25519.PrivateKey, skpacket, idpacket []byte, created int64) []byte {
+func signKey(key ed25519.PrivateKey, skpacket, idpacket []byte, created int64) []byte {
 
 	keyid := keyid(skpacket)
 	sigpacket := []byte{
@@ -281,7 +281,8 @@ func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
 	return
 }
 
-func newSubkeySignaturePacket(key ed25519.PrivateKey, skpacket, sskpacket []byte, created int64) []byte {
+// Return a Signature Packet authenticating a subkey with a primary key.
+func signSubkey(key ed25519.PrivateKey, skpacket, sskpacket []byte, created int64) []byte {
 	keyid := keyid(skpacket)
 	sigpacket := []byte{
 		0xc2,  // packet header, new format, Signature Packet (2)
@@ -337,6 +338,7 @@ func main() {
 	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
 	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
 	paranoid := flag.Bool("paranoid", false, "paranoid mode")
+	signOnly := flag.Bool("sign-only", false, "don't output encryption subkey")
 	now := flag.Bool("now", false, "use current time as creation date")
 
 	flag.Parse()
@@ -362,23 +364,33 @@ func main() {
 	seckey := key[:32]
 	pubkey := key[32:]
 
+	// Buffer output and perform all writes at once at the end
+	buf := bytes.NewBuffer(nil)
+
 	// Secret-Key Packet
 	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
-	os.Stdout.Write(skpacket)
+	buf.Write(skpacket)
 
 	// User ID Packet
 	idpacket := newUserIDPacket(*uid)
-	os.Stdout.Write(idpacket)
+	buf.Write(idpacket)
 
-	// Signature Packet
-	sigpacket := newKeySignaturePacket(key, skpacket, idpacket, *created)
-	os.Stdout.Write(sigpacket)
+	// Signature Packet (primary key)
+	sigpacket := signKey(key, skpacket, idpacket, *created)
+	buf.Write(sigpacket)
 
-	// Secret-Subkey Packet
-	subseckey, subpubkey := newCurve25519Keys(seed)
-	sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
-	os.Stdout.Write(sskpacket)
+	if !*signOnly {
+		// Secret-Subkey Packet
+		subseckey, subpubkey := newCurve25519Keys(seed)
+		sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
+		buf.Write(sskpacket)
 
-	ssigpacket := newSubkeySignaturePacket(key, skpacket, sskpacket, *created)
-	os.Stdout.Write(ssigpacket)
+		// Signature Packet (subkey)
+		ssigpacket := signSubkey(key, skpacket, sskpacket, *created)
+		buf.Write(ssigpacket)
+	}
+
+	if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+		fatal("%s", err)
+	}
 }
