@@ -141,7 +141,7 @@ func newKeySignaturePacket(key ed25519.PrivateKey, skpacket, idpacket []byte, cr
 		0x13,  // signature type, Positive certification of a User ID
 		22,    // public-key algorithm, EdDSA
 		8,     // hash algorithm, SHA-256
-		0, 16, // hashed subpacket data length
+		0, 19, // hashed subpacket data length
 		// Signature Creation Time subpacket (length=5, type=2)
 		5, 2,
 		byte(created >> 24),
@@ -151,6 +151,9 @@ func newKeySignaturePacket(key ed25519.PrivateKey, skpacket, idpacket []byte, cr
 		// Issuer subpacket (length=9, type=16)
 		9, 16,
 		0, 0, 0, 0, 0, 0, 0, 0,
+		// Features
+		2, 30,
+		0x01, // MDC
 		0, 0, // no unhashed subpacket data
 		0, 0, // hash value preview
 	}
@@ -164,14 +167,14 @@ func newKeySignaturePacket(key ed25519.PrivateKey, skpacket, idpacket []byte, cr
 	h.Write(skpacket[2:53]) // public key portion
 	h.Write([]byte{0xb4, 0, 0, 0})
 	h.Write(idpacket[1:])
-	h.Write(sigpacket[2:24])              // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, 22}) // final trailer
+	h.Write(sigpacket[2:27])              // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, 25}) // final trailer
 	sigsum := h.Sum(nil)
 	sig := ed25519.Sign(key, sigsum)
 
 	// Fill out hash preview
-	sigpacket[26] = sigsum[0]
-	sigpacket[27] = sigsum[1]
+	sigpacket[29] = sigsum[0]
+	sigpacket[30] = sigsum[1]
 
 	// Fill out signature
 	r := sig[:32]
