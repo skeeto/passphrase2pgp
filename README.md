@@ -56,6 +56,13 @@ passphrase on your GnuPG keychain in order to protect it at rest:
     $ gpg --edit-key "Real Name"
     gpg> passwd
 
+Trust is stored external to the keys, so imported keys are always
+initially untrusted. You will likely want to mark your newly-imported
+primary key as trusted.
+
+    $ gpg --edit-key "Real Name"
+    gpg> trust
+
 ## Philosophy
 
 Since [OpenPGP encryption is neither good nor useful anymore][mg], I
