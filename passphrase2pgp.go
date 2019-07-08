@@ -20,6 +20,11 @@ import (
 	"golang.org/x/crypto/ssh/terminal"
 )
 
+const (
+	kdfTime   = 8
+	kdfMemory = 1024 * 1024 // 1 GB
+)
+
 // Returns data encoded as an OpenPGP multiprecision integer.
 func mpi(data []byte) []byte {
 	// Chop off leading zeros
@@ -68,9 +73,11 @@ func readPassphrase(repeat int) ([]byte, error) {
 	return passphrase, nil
 }
 
-// Derive a 32-byte seed from the given passphrase.
-func kdf(passphrase []byte, time uint32) []byte {
-	var memory uint32 = 1024 * 1024 // 1 GB
+// Derive a 32-byte seed from the given passphrase. The scale factor
+// scales up the difficulty proportional to scale*scale.
+func kdf(passphrase []byte, scale int) []byte {
+	var time uint32 = uint32(kdfTime * scale)
+	var memory uint32 = uint32(kdfMemory * scale)
 	var threads uint8 = 1
 	var seedSize uint32 = ed25519.SeedSize
 	return argon2.IDKey(passphrase, nil, time, memory, threads, seedSize)
@@ -346,13 +353,11 @@ func main() {
 	if err != nil {
 		fatal("%s", err)
 	}
-	var time uint32
+	scale := 1
 	if *paranoid {
-		time = 32
-	} else {
-		time = 8
+		scale = 2 // actually 4x difficulty
 	}
-	seed := kdf(passphrase, time)
+	seed := kdf(passphrase, scale)
 	key := ed25519.NewKeyFromSeed(seed)
 	seckey := key[:32]
 	pubkey := key[32:]
