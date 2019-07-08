@@ -82,5 +82,8 @@ passphrase2pgp while it was being developed.
 ## References
 
 * [RFC 4880: OpenPGP Message Format](https://tools.ietf.org/html/rfc4880)
+* [RFC 6637: Elliptic Curve Cryptography (ECC) in OpenPGP](https://tools.ietf.org/html/rfc6637) (incomplete / inaccurate)
+* [RFC 7748: Elliptic Curves for Security](https://tools.ietf.org/html/rfc7748)
 * [RFC 8032: Edwards-Curve Digital Signature Algorithm (EdDSA)](https://tools.ietf.org/html/rfc8032)
 * [RFC Draft: EdDSA for OpenPGP](https://tools.ietf.org/html/draft-koch-eddsa-for-openpgp-00)
+* [RFC Draft: OpenPGP Message Format](https://tools.ietf.org/html/draft-ietf-openpgp-rfc4880bis-07) (incomplete / inaccurate)
