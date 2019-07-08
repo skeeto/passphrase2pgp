@@ -11,6 +11,8 @@ The keys are derived from the passphrase using [Argon2id][argon2]
 to protect passphrases short enough to be memorable by humans from
 offline brute force attacks. Always use [a strong passphrase][dw].
 
+Requires Go 1.9 or later.
+
 [argon2]: https://github.com/P-H-C/phc-winner-argon2
 [rfc8032]: https://tools.ietf.org/html/rfc8032
 [dw]: https://en.wikipedia.org/wiki/Diceware
