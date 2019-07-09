@@ -388,7 +388,7 @@ func main() {
 	pubkey := key[32:]
 
 	// Buffer output and perform all writes at once at the end
-	buf := bytes.NewBuffer(nil)
+	var buf bytes.Buffer
 
 	// Secret-Key Packet
 	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
