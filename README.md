@@ -36,6 +36,8 @@ Just pipe the output straight into GnuPG:
         	use current time as creation date
       -paranoid
         	paranoid mode
+      -passphrase-file string
+        	read passphrase from file
       -repeat uint
         	number of repeated passphrase prompts (default 1)
       -sign-only

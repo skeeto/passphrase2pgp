@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/bits"
 	"os"
 	"syscall"
@@ -71,6 +73,24 @@ func readPassphrase(repeat int) ([]byte, error) {
 		}
 	}
 	return passphrase, nil
+}
+
+// Returns the first line of a file not including \r or \n. Does not
+// require a newline and does not return io.EOF.
+func firstLine(filename string) ([]byte, error) {
+	f, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	s := bufio.NewScanner(f)
+	if !s.Scan() {
+		if err := s.Err(); err != io.EOF {
+			return nil, err
+		}
+		return nil, nil // empty files are ok
+	}
+	return s.Bytes(), nil
 }
 
 // Derive a 64-byte seed from the given passphrase. The scale factor
@@ -331,13 +351,13 @@ func signSubkey(key ed25519.PrivateKey, skpacket, sskpacket []byte, created int6
 }
 
 func main() {
-	uid := flag.String("uid", "", "key user ID (required)")
-	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
 	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
-	paranoid := flag.Bool("paranoid", false, "paranoid mode")
-	signOnly := flag.Bool("sign-only", false, "don't output encryption subkey")
 	now := flag.Bool("now", false, "use current time as creation date")
-
+	paranoid := flag.Bool("paranoid", false, "paranoid mode")
+	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
+	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
+	signOnly := flag.Bool("sign-only", false, "don't output encryption subkey")
+	uid := flag.String("uid", "", "key user ID (required)")
 	flag.Parse()
 
 	if *uid == "" {
@@ -348,7 +368,13 @@ func main() {
 	}
 
 	// Derive a key from the passphrase
-	passphrase, err := readPassphrase(int(*repeat))
+	var passphrase []byte
+	var err error
+	if *ppFile != "" {
+		passphrase, err = firstLine(*ppFile)
+	} else {
+		passphrase, err = readPassphrase(int(*repeat))
+	}
 	if err != nil {
 		fatal("%s", err)
 	}
