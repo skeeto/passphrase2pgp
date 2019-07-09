@@ -73,14 +73,13 @@ func readPassphrase(repeat int) ([]byte, error) {
 	return passphrase, nil
 }
 
-// Derive a 32-byte seed from the given passphrase. The scale factor
+// Derive a 64-byte seed from the given passphrase. The scale factor
 // scales up the difficulty proportional to scale*scale.
 func kdf(passphrase []byte, scale int) []byte {
 	var time uint32 = uint32(kdfTime * scale)
 	var memory uint32 = uint32(kdfMemory * scale)
 	var threads uint8 = 1
-	var seedSize uint32 = ed25519.SeedSize
-	return argon2.IDKey(passphrase, nil, time, memory, threads, seedSize)
+	return argon2.IDKey(passphrase, nil, time, memory, threads, 64)
 }
 
 // Returns a Secret-Key Packet for a key pair.
@@ -271,9 +270,7 @@ func reverse(b []byte) []byte {
 
 // Return a Curve25519 keypair from a seed.
 func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
-	h := sha256.New()
-	h.Write(seed)
-	seckey = h.Sum(nil)
+	seckey = append(seed[:0:0], seed...)
 	seckey[0] &= 248
 	seckey[31] &= 127
 	seckey[31] |= 64
@@ -360,7 +357,7 @@ func main() {
 		scale = 2 // actually 4x difficulty
 	}
 	seed := kdf(passphrase, scale)
-	key := ed25519.NewKeyFromSeed(seed)
+	key := ed25519.NewKeyFromSeed(seed[:32])
 	seckey := key[:32]
 	pubkey := key[32:]
 
@@ -381,7 +378,7 @@ func main() {
 
 	if !*signOnly {
 		// Secret-Subkey Packet
-		subseckey, subpubkey := newCurve25519Keys(seed)
+		subseckey, subpubkey := newCurve25519Keys(seed[32:])
 		sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
 		buf.Write(sskpacket)
 
