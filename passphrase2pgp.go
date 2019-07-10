@@ -53,16 +53,15 @@ func fatal(format string, args ...interface{}) {
 
 // Read, confirm, and return a passphrase from the user.
 func readPassphrase(repeat int) ([]byte, error) {
-	prompt := []byte("passphrase: ")
 	tail := []byte("\n")
-	os.Stderr.Write(prompt)
+	os.Stderr.Write([]byte("passphrase: "))
 	passphrase, err := terminal.ReadPassword(int(syscall.Stdin))
 	if err != nil {
 		return nil, err
 	}
 	os.Stderr.Write(tail)
 	for i := 0; i < repeat; i++ {
-		os.Stderr.Write(prompt)
+		os.Stderr.Write([]byte("passphrase (repeat): "))
 		again, err := terminal.ReadPassword(int(syscall.Stdin))
 		if err != nil {
 			return nil, err
