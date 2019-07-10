@@ -6,10 +6,11 @@ allowing you to store a backup of your PGP keys in your brain. At any
 time you can re-run the tool and re-enter the passphrase to reproduce
 the original keys.
 
-The keys are derived from the passphrase using [Argon2id][argon2]
-(memory=1GB and time=8) and [RFC 8032][rfc8032]. It's aggressive enough
-to protect passphrases short enough to be memorable by humans from
-offline brute force attacks. Always use [a strong passphrase][dw].
+The keys are derived from the passphrase and User ID (as salt) using
+[Argon2id][argon2] (memory=1GB and time=8) and [RFC 8032][rfc8032]. It's
+aggressive enough to protect passphrases short enough to be memorable by
+humans from offline brute force attacks. Always use [a strong
+passphrase][dw].
 
 Requires Go 1.9 or later.
 
@@ -27,7 +28,11 @@ Just pipe the output straight into GnuPG:
 
     $ passphrase2pgp -uid "Real Name <name@example.com>" | gpg --import
 
-**The `-uid` argument is required.** Use `-help` for an option listing:
+**The `-uid` argument is required.** It's also used as an input during
+key generation, so to reproduce the same key, you will need to use
+exactly the same passphrase *and* User ID.
+
+Use `-help` for an option listing:
 
     Usage of passphrase2pgp:
       -date int
@@ -45,9 +50,10 @@ Just pipe the output straight into GnuPG:
       -uid string
         	key user ID (required)
 
-**The Key ID is a hash over both the key and its creation date.**
-Therefore using a different date with the same passphrase will result in
-a different key. For this reason, passphrase2pgp uses Unix epoch 0
+Per the OpenPGP specification, **the Key ID is a hash over both the key
+and its creation date.** Therefore using a different date with the same
+passphrase/uid will result in a different Key ID, despite the underlying
+key being the same. For this reason, passphrase2pgp uses Unix epoch 0
 (January 1, 1970) as the default creation date. You can override this
 with `-date` or `-now`, but, to regenerate the same key in the future,
 you will need to use `-date` to reenter the exact time. If 1970 is a

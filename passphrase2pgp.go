@@ -95,11 +95,11 @@ func firstLine(filename string) ([]byte, error) {
 
 // Derive a 64-byte seed from the given passphrase. The scale factor
 // scales up the difficulty proportional to scale*scale.
-func kdf(passphrase []byte, scale int) []byte {
+func kdf(passphrase, uid []byte, scale int) []byte {
 	var time uint32 = uint32(kdfTime * scale)
 	var memory uint32 = uint32(kdfMemory * scale)
 	var threads uint8 = 1
-	return argon2.IDKey(passphrase, nil, time, memory, threads, 64)
+	return argon2.IDKey(passphrase, uid, time, memory, threads, 64)
 }
 
 // Returns a Secret-Key Packet for a key pair.
@@ -382,7 +382,7 @@ func main() {
 	if *paranoid {
 		scale = 2 // actually 4x difficulty
 	}
-	seed := kdf(passphrase, scale)
+	seed := kdf(passphrase, []byte(*uid), scale)
 	key := ed25519.NewKeyFromSeed(seed[:32])
 	seckey := key[:32]
 	pubkey := key[32:]
