@@ -575,7 +575,7 @@ func main() {
 		if *paranoid {
 			scale = 2 // actually 4x difficulty
 		}
-		seed := kdf(passphrase, []byte(*uid), scale)
+		seed = kdf(passphrase, []byte(*uid), scale)
 		key = ed25519.NewKeyFromSeed(seed[:32])
 	}
 	seckey := key[:32]
