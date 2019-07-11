@@ -94,8 +94,8 @@ It's also possible create detached signatures with passphrase2pgp:
 Where `Real-Name.pgp`, `data`, and `data.sig` are distributed to others.
 Consuming these in GnuPG:
 
-    $ gpg --import Real-Name.pgp
-    $ gpg --verify data
+    $ gpg --import Real-Name.asc
+    $ gpg --verify data.sig
 
 ## Philosophy
 
