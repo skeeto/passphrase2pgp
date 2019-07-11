@@ -475,6 +475,7 @@ func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
 
 func main() {
 	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
+	fingerprint := flag.Bool("fingerprint", false, "also show fingerprint")
 	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
 	loadKey := flag.String("load", "",
 		"load key from file instead of generating")
@@ -534,8 +535,12 @@ func main() {
 
 	// Secret-Key Packet
 	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
+	keyid := keyid(skpacket)
+	if *fingerprint {
+		fmt.Fprintf(os.Stderr, "%X\n", keyid)
+	}
 	if *signOnly {
-		packet, err := sign(os.Stdin, keyid(skpacket), key)
+		packet, err := sign(os.Stdin, keyid, key)
 		if err != nil {
 			fatal("%s", err)
 		}

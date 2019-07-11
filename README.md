@@ -37,6 +37,8 @@ Use `-help` for an option listing:
     Usage of passphrase2pgp:
       -date int
         	creation date (unix epoch seconds)
+      -fingerprint
+        	also show fingerprint
       -load string
         	load key from file instead of generating
       -now
