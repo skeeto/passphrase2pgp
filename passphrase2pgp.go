@@ -105,7 +105,7 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 // Returns a Secret-Key Packet for a key pair.
-func newSecretKeyPacket(seckey, pubkey []byte, created uint64) []byte {
+func newSecretKeyPacket(seckey, pubkey []byte, created int64) []byte {
 	packet := []byte{
 		0xc5, // packet header, new format, Secret-Key Packet (5)
 		0,    // packet length
@@ -161,7 +161,7 @@ func newUserIDPacket(uid string) []byte {
 type signatureContext struct {
 	key                           ed25519.PrivateKey
 	skpacket, sskpacket, idpacket []byte
-	created                       uint64
+	created                       int64
 	mdc                           bool
 }
 
@@ -249,7 +249,7 @@ func signKey(ctx *signatureContext) []byte {
 	return sigpacket
 }
 
-func newSecretSubkeyPacket(seckey, pubkey []byte, created uint64) []byte {
+func newSecretSubkeyPacket(seckey, pubkey []byte, created int64) []byte {
 	packet := []byte{
 		0xc7, // packet header, new format, Secret-Subkey Packet (7)
 		0,    // packet length
@@ -299,12 +299,86 @@ func newSecretSubkeyPacket(seckey, pubkey []byte, created uint64) []byte {
 	return packet
 }
 
+// Returns a Signature Packet for an input.
+func sign(src io.Reader, keyid []byte, key ed25519.PrivateKey) ([]byte, error) {
+	created := time.Now().Unix()
+	buf := bytes.NewBuffer([]byte{
+		0xc2, // packet header, new format, Signature Packet (2)
+		0,    // packet length
+		0x04, // packet version, new (4)
+		0x00, // signature type, binary document
+		22,   // public-key algorithm, EdDSA
+		8,    // hash algorithm, SHA-256
+		0, 0, // hashed subpacket data length
+	})
+
+	// Signature Creation Time subpacket (length=5, type=2)
+	buf.Write([]byte{
+		5, 2,
+		byte(created >> 24),
+		byte(created >> 16),
+		byte(created >> 8),
+		byte(created >> 0),
+	})
+
+	// Issuer subpacket (length=9, type=16)
+	buf.Write([]byte{
+		9, 16,
+	})
+	buf.Write(keyid[12:])
+
+	// Issuer Fingerprint subpacket (length=22, type=33)
+	buf.Write([]byte{
+		22, 33,
+		04, // fingerprint version
+	})
+	buf.Write(keyid)
+
+	// Actual hashed subpacket data length
+	hashedLen := buf.Len() - 8
+
+	// Unhashed subpacket data (none)
+	buf.Write([]byte{
+		0, 0,
+	})
+
+	// Fill out hashed data length
+	sigpacket := buf.Bytes()
+	binary.BigEndian.PutUint16(sigpacket[6:], uint16(hashedLen))
+
+	// Compute digest to be signed
+	h := sha256.New()
+	if _, err := io.Copy(h, src); err != nil {
+		return nil, err
+	}
+	h.Write(sigpacket[2 : hashedLen+8])                 // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, sigpacket[7] + 6}) // final trailer
+	sigsum := h.Sum(nil)
+	sig := ed25519.Sign(key, sigsum)
+
+	// Fill out hash preview
+	buf.Write(sigsum[0:2])
+
+	// Fill out signature
+	r := sig[:32]
+	buf.Write(mpi(r))
+	m := sig[32:]
+	buf.Write(mpi(m))
+
+	// Finalize
+	sigpacket = buf.Bytes()
+	sigpacket[1] = byte(len(sigpacket)) - 2
+	return sigpacket, nil
+}
+
+// Modify and return packet with secret key removed.
 func stripSecretKeyPacket(skpacket []byte) []byte {
 	skpacket[0] = 0xc6
 	skpacket[1] = pubKeyLen - 2
 	return skpacket[:pubKeyLen]
 }
 
+// Modify and return packet with secret subkey removed.
 func stripSecretSubkeyPacket(sskpacket []byte) []byte {
 	sskpacket[0] = 0xce
 	sskpacket[1] = pubSubkeyLen - 2
@@ -348,13 +422,14 @@ func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
 }
 
 func main() {
-	created := flag.Uint64("date", 0, "creation date (unix epoch seconds)")
+	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
+	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
 	now := flag.Bool("now", false, "use current time as creation date")
 	paranoid := flag.Bool("paranoid", false, "paranoid mode")
 	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
 	publicOnly := flag.Bool("public", false, "only output public key")
 	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
-	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
+	signOnly := flag.Bool("sign", false, "output detached signature for input")
 	uid := flag.String("uid", "", "key user ID (required)")
 	flag.Parse()
 
@@ -362,7 +437,7 @@ func main() {
 		fatal("missing User ID (-uid) option")
 	}
 	if *now {
-		*created = uint64(time.Now().Unix())
+		*created = time.Now().Unix()
 	}
 
 	// Derive a key from the passphrase
@@ -390,6 +465,16 @@ func main() {
 
 	// Secret-Key Packet
 	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
+	if *signOnly {
+		packet, err := sign(os.Stdin, keyid(skpacket), key)
+		if err != nil {
+			fatal("%s", err)
+		}
+		if _, err := os.Stdout.Write(packet); err != nil {
+			fatal("%s", err)
+		}
+		return
+	}
 	if *publicOnly {
 		buf.Write(stripSecretKeyPacket(skpacket))
 	} else {

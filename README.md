@@ -35,7 +35,7 @@ exactly the same passphrase *and* User ID.
 Use `-help` for an option listing:
 
     Usage of passphrase2pgp:
-      -date uint
+      -date int
         	creation date (unix epoch seconds)
       -now
         	use current time as creation date
@@ -47,6 +47,8 @@ Use `-help` for an option listing:
         	only output public key
       -repeat uint
         	number of repeated passphrase prompts (default 1)
+      -sign
+        	output detached signature for input
       -subkey
         	also output an encryption subkey
       -uid string
