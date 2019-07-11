@@ -183,22 +183,31 @@ func signKey(ctx *signatureContext) []byte {
 		22,      // public-key algorithm, EdDSA
 		8,       // hash algorithm, SHA-256
 		0, 0,    // hashed subpacket data length
-		// Signature Creation Time subpacket (length=5, type=2)
+	})
+
+	// Signature Creation Time subpacket (length=5, type=2)
+	buf.Write([]byte{
 		5, 2,
 		byte(ctx.created >> 24),
 		byte(ctx.created >> 16),
 		byte(ctx.created >> 8),
 		byte(ctx.created >> 0),
-		// Issuer subpacket (length=9, type=16)
-		9, 16,
 	})
 
-	// Issuer subpacket contents
+	// Issuer subpacket (length=9, type=16)
+	buf.Write([]byte{
+		9, 16,
+	})
 	buf.Write(keyid[12:])
+	// An Issuer Fingerprint subpacket is unnecessary here because this
+	// is a self-signature, and so even the Issuer subpacket is already
+	// redundant. The recipient already knows which key we're talking
+	// about. Technically the Issuer subpacket is optional, but GnuPG
+	// will not import a key without it.
 
 	if ctx.mdc {
+		// Features subpacket
 		buf.Write([]byte{
-			// Features
 			2, 30,
 			0x01, // MDC
 		})
