@@ -24,3 +24,22 @@ func TestMpi(t *testing.T) {
 		}
 	}
 }
+
+func TestCRC24(t *testing.T) {
+	table := []struct {
+		input string
+		want  int32
+	}{
+		{"", 0xb704ce},
+		{"hello", 0x47f58a},
+		{"The quick brown fox jumper over the lazy dog.", 0x4d2822},
+		{string(make([]byte, 16)), 0x900590},
+	}
+
+	for _, row := range table {
+		got := crc24([]byte(row.input))
+		if got != row.want {
+			t.Errorf("crc24(%q), got %#x, want %#x", row.input, got, row.want)
+		}
+	}
+}
