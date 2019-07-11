@@ -47,8 +47,8 @@ Use `-help` for an option listing:
         	only output public key
       -repeat uint
         	number of repeated passphrase prompts (default 1)
-      -sign-only
-        	don't output encryption subkey
+      -subkey
+        	also output an encryption subkey
       -uid string
         	key user ID (required)
 

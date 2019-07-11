@@ -352,9 +352,9 @@ func main() {
 	now := flag.Bool("now", false, "use current time as creation date")
 	paranoid := flag.Bool("paranoid", false, "paranoid mode")
 	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
-	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
-	signOnly := flag.Bool("sign-only", false, "don't output encryption subkey")
 	publicOnly := flag.Bool("public", false, "only output public key")
+	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
+	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
 	uid := flag.String("uid", "", "key user ID (required)")
 	flag.Parse()
 
@@ -406,11 +406,11 @@ func main() {
 		skpacket: skpacket,
 		idpacket: idpacket,
 		created:  *created,
-		mdc:      !*signOnly,
+		mdc:      *genSubkey,
 	})
 	buf.Write(sigpacket)
 
-	if !*signOnly {
+	if *genSubkey {
 		// Secret-Subkey Packet
 		subseckey, subpubkey := newCurve25519Keys(seed[32:])
 		sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
