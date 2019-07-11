@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
@@ -102,7 +103,7 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 // Returns a Secret-Key Packet for a key pair.
-func newSecretKeyPacket(seckey, pubkey []byte, created int64) []byte {
+func newSecretKeyPacket(seckey, pubkey []byte, created uint64) []byte {
 	packet := []byte{
 		0xc5, // packet header, new format, Secret-Key Packet (5)
 		0,    // packet length
@@ -155,63 +156,98 @@ func newUserIDPacket(uid string) []byte {
 	}, []byte(uid)...)
 }
 
-// Returns a Signature Packet binding a Secret-Key Packet and User ID Packet.
-func signKey(key ed25519.PrivateKey, skpacket, idpacket []byte, created int64) []byte {
+type signatureContext struct {
+	key                           ed25519.PrivateKey
+	skpacket, sskpacket, idpacket []byte
+	created                       uint64
+	mdc                           bool
+}
 
-	keyid := keyid(skpacket)
-	sigpacket := []byte{
-		0xc2,  // packet header, new format, Signature Packet (2)
-		0,     // packet length
-		0x04,  // packet version, new (4)
-		0x13,  // signature type, Positive certification of a User ID
-		22,    // public-key algorithm, EdDSA
-		8,     // hash algorithm, SHA-256
-		0, 19, // hashed subpacket data length
-		// Signature Creation Time subpacket (length=5, type=2)
-		5, 2,
-		byte(created >> 24),
-		byte(created >> 16),
-		byte(created >> 8),
-		byte(created >> 0),
-		// Issuer subpacket (length=9, type=16)
-		9, 16,
-		0, 0, 0, 0, 0, 0, 0, 0,
-		// Features
-		2, 30,
-		0x01, // MDC
-		0, 0, // no unhashed subpacket data
-		0, 0, // hash value preview
+// Returns a Signature Packet binding a Secret-Key Packet and User ID Packet.
+func signKey(ctx *signatureContext) []byte {
+	keyid := keyid(ctx.skpacket)
+	var sigType byte
+	if ctx.sskpacket == nil {
+		sigType = 0x13 // Positive certification of a User ID
+	} else {
+		sigType = 0x18 // Subkey Binding Signature
 	}
 
-	// Fill out Issuer subpacket
-	copy(sigpacket[16:24], keyid[12:])
+	buf := bytes.NewBuffer([]byte{
+		0xc2,    // packet header, new format, Signature Packet (2)
+		0,       // packet length
+		0x04,    // packet version, new (4)
+		sigType, // signature type
+		22,      // public-key algorithm, EdDSA
+		8,       // hash algorithm, SHA-256
+		0, 0,    // hashed subpacket data length
+		// Signature Creation Time subpacket (length=5, type=2)
+		5, 2,
+		byte(ctx.created >> 24),
+		byte(ctx.created >> 16),
+		byte(ctx.created >> 8),
+		byte(ctx.created >> 0),
+		// Issuer subpacket (length=9, type=16)
+		9, 16,
+	})
+
+	// Issuer subpacket contents
+	buf.Write(keyid[12:])
+
+	if ctx.mdc {
+		buf.Write([]byte{
+			// Features
+			2, 30,
+			0x01, // MDC
+		})
+	}
+
+	// Actual hashed subpacket data length
+	hashedLen := buf.Len() - 8
+
+	// Unhashed subpacket data (none)
+	buf.Write([]byte{
+		0, 0,
+	})
+
+	// Fill out hashed data length
+	sigpacket := buf.Bytes()
+	binary.BigEndian.PutUint16(sigpacket[6:], uint16(hashedLen))
 
 	// Compute digest to be signed
 	h := sha256.New()
 	h.Write([]byte{0x99, 0, 51})
-	h.Write(skpacket[2:53]) // public key portion
-	h.Write([]byte{0xb4, 0, 0, 0})
-	h.Write(idpacket[1:])
-	h.Write(sigpacket[2:27])              // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, 25}) // final trailer
+	h.Write(ctx.skpacket[2:53]) // public key portion
+	if sigType == 0x13 {
+		// Secret-Key signature
+		h.Write([]byte{0xb4, 0, 0, 0})
+		h.Write(ctx.idpacket[1:])
+	} else {
+		// Secret-Subkey signature
+		h.Write([]byte{0x99, 0, 56})
+		h.Write(ctx.sskpacket[2:58])
+	}
+	h.Write(sigpacket[2 : hashedLen+8])                 // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, sigpacket[7] + 6}) // final trailer
 	sigsum := h.Sum(nil)
-	sig := ed25519.Sign(key, sigsum)
+	sig := ed25519.Sign(ctx.key, sigsum)
 
 	// Fill out hash preview
-	sigpacket[29] = sigsum[0]
-	sigpacket[30] = sigsum[1]
+	buf.Write(sigsum[0:2])
 
 	// Fill out signature
 	r := sig[:32]
-	sigpacket = append(sigpacket, mpi(r)...)
+	buf.Write(mpi(r))
 	m := sig[32:]
-	sigpacket = append(sigpacket, mpi(m)...)
+	buf.Write(mpi(m))
 
+	// Finalize
+	sigpacket = buf.Bytes()
 	sigpacket[1] = byte(len(sigpacket)) - 2
 	return sigpacket
 }
 
-func newSecretSubkeyPacket(seckey, pubkey []byte, created int64) []byte {
+func newSecretSubkeyPacket(seckey, pubkey []byte, created uint64) []byte {
 	packet := []byte{
 		0xc7, // packet header, new format, Secret-Subkey Packet (7)
 		0,    // packet length
@@ -297,60 +333,8 @@ func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
 	return
 }
 
-// Return a Signature Packet authenticating a subkey with a primary key.
-func signSubkey(key ed25519.PrivateKey, skpacket, sskpacket []byte, created int64) []byte {
-	keyid := keyid(skpacket)
-	sigpacket := []byte{
-		0xc2,  // packet header, new format, Signature Packet (2)
-		0,     // packet length
-		0x04,  // packet version, new (4)
-		0x18,  // signature type, Subkey Binding Signature
-		22,    // public-key algorithm, EdDSA
-		8,     // hash algorithm, SHA-256
-		0, 16, // hashed subpacket data length
-		// Signature Creation Time subpacket (length=5, type=2)
-		5, 2,
-		byte(created >> 24),
-		byte(created >> 16),
-		byte(created >> 8),
-		byte(created >> 0),
-		// Issuer subpacket (length=9, type=16)
-		9, 16,
-		0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, // no unhashed subpacket data
-		0, 0, // hash value preview
-	}
-
-	// Fill out Issuer subpacket
-	copy(sigpacket[16:24], keyid[12:])
-
-	// Compute digest to be signed
-	h := sha256.New()
-	h.Write([]byte{0x99, 0, 51})
-	h.Write(skpacket[2:53]) // public key portion
-	h.Write([]byte{0x99, 0, 56})
-	h.Write(sskpacket[2:58])
-	h.Write(sigpacket[2:24])              // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, 22}) // final trailer
-	sigsum := h.Sum(nil)
-	sig := ed25519.Sign(key, sigsum)
-
-	// Fill out hash preview
-	sigpacket[26] = sigsum[0]
-	sigpacket[27] = sigsum[1]
-
-	// Fill out signature
-	r := sig[:32]
-	sigpacket = append(sigpacket, mpi(r)...)
-	m := sig[32:]
-	sigpacket = append(sigpacket, mpi(m)...)
-
-	sigpacket[1] = byte(len(sigpacket)) - 2
-	return sigpacket
-}
-
 func main() {
-	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
+	created := flag.Uint64("date", 0, "creation date (unix epoch seconds)")
 	now := flag.Bool("now", false, "use current time as creation date")
 	paranoid := flag.Bool("paranoid", false, "paranoid mode")
 	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
@@ -363,7 +347,7 @@ func main() {
 		fatal("missing User ID (-uid) option")
 	}
 	if *now {
-		*created = time.Now().Unix()
+		*created = uint64(time.Now().Unix())
 	}
 
 	// Derive a key from the passphrase
@@ -398,7 +382,13 @@ func main() {
 	buf.Write(idpacket)
 
 	// Signature Packet (primary key)
-	sigpacket := signKey(key, skpacket, idpacket, *created)
+	sigpacket := signKey(&signatureContext{
+		key:      key,
+		skpacket: skpacket,
+		idpacket: idpacket,
+		created:  *created,
+		mdc:      !*signOnly,
+	})
 	buf.Write(sigpacket)
 
 	if !*signOnly {
@@ -408,7 +398,12 @@ func main() {
 		buf.Write(sskpacket)
 
 		// Signature Packet (subkey)
-		ssigpacket := signSubkey(key, skpacket, sskpacket, *created)
+		ssigpacket := signKey(&signatureContext{
+			key:       key,
+			skpacket:  skpacket,
+			sskpacket: sskpacket,
+			created:   *created,
+		})
 		buf.Write(ssigpacket)
 	}
 
