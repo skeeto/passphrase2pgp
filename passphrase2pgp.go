@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/bits"
 	"os"
 	"syscall"
@@ -148,6 +149,48 @@ func newSecretKeyPacket(seckey, pubkey []byte, created int64) []byte {
 
 	packet[1] = byte(len(packet) - 2)
 	return packet
+}
+
+// Return a primary key and User ID loaded from a reader. Only keys
+// previously output by passphrase2pgp are supported.
+func load(r io.Reader) (key ed25519.PrivateKey, uid []byte, err error) {
+	invalid := errors.New("invalid input key")
+	defer func() {
+		if recover() != nil {
+			err = invalid
+		}
+	}()
+
+	buf, err := ioutil.ReadAll(r)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if buf[0] != 0xc5 {
+		return nil, nil, invalid
+	}
+	plen := int(buf[1])
+	skpacket := buf[:plen] // chop off checksum
+	pubkey := skpacket[pubKeyLen-32 : pubKeyLen]
+
+	seckey := skpacket[pubKeyLen+3:]
+	seckey = append(make([]byte, 32-len(seckey)), seckey...)
+
+	key = ed25519.NewKeyFromSeed(seckey)
+	if !bytes.Equal(pubkey, key[32:]) {
+		return nil, nil, invalid
+	}
+
+	buf = buf[plen+2:] // chop off Secret-Key Packet
+
+	if buf[0] != 0xcd {
+		return nil, nil, invalid
+	}
+	plen = int(buf[1])
+	idpacket := buf[:plen+2]
+	uid = idpacket[2:]
+
+	return
 }
 
 // Returns a User ID Packet for the given identity.
@@ -433,6 +476,8 @@ func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
 func main() {
 	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
 	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
+	loadKey := flag.String("load", "",
+		"load key from file instead of generating")
 	now := flag.Bool("now", false, "use current time as creation date")
 	paranoid := flag.Bool("paranoid", false, "paranoid mode")
 	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
@@ -442,30 +487,45 @@ func main() {
 	uid := flag.String("uid", "", "key user ID (required)")
 	flag.Parse()
 
-	if *uid == "" {
+	if *uid == "" && *loadKey == "" {
 		fatal("missing User ID (-uid) option")
 	}
 	if *now {
 		*created = time.Now().Unix()
 	}
 
-	// Derive a key from the passphrase
-	var passphrase []byte
-	var err error
-	if *ppFile != "" {
-		passphrase, err = firstLine(*ppFile)
+	var key ed25519.PrivateKey
+	var seed []byte
+	if *loadKey != "" {
+		// Load previously-generated key
+		f, err := os.Open(*loadKey)
+		if err != nil {
+			fatal("%s", err)
+		}
+		var uidbytes []byte
+		key, uidbytes, err = load(f)
+		*uid = string(uidbytes)
+		*genSubkey = false
+
 	} else {
-		passphrase, err = readPassphrase(int(*repeat))
+		// Derive a key from the passphrase
+		var passphrase []byte
+		var err error
+		if *ppFile != "" {
+			passphrase, err = firstLine(*ppFile)
+		} else {
+			passphrase, err = readPassphrase(int(*repeat))
+		}
+		if err != nil {
+			fatal("%s", err)
+		}
+		scale := 1
+		if *paranoid {
+			scale = 2 // actually 4x difficulty
+		}
+		seed := kdf(passphrase, []byte(*uid), scale)
+		key = ed25519.NewKeyFromSeed(seed[:32])
 	}
-	if err != nil {
-		fatal("%s", err)
-	}
-	scale := 1
-	if *paranoid {
-		scale = 2 // actually 4x difficulty
-	}
-	seed := kdf(passphrase, []byte(*uid), scale)
-	key := ed25519.NewKeyFromSeed(seed[:32])
 	seckey := key[:32]
 	pubkey := key[32:]
 

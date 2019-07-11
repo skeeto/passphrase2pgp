@@ -37,6 +37,8 @@ Use `-help` for an option listing:
     Usage of passphrase2pgp:
       -date int
         	creation date (unix epoch seconds)
+      -load string
+        	load key from file instead of generating
       -now
         	use current time as creation date
       -paranoid
@@ -78,6 +80,20 @@ primary key as trusted.
 
     $ gpg --edit-key "Real Name"
     gpg> trust
+
+It's also possible create detached signatures with passphrase2pgp:
+
+    $ passphrase2pgp -uid "Real Name" >secret.pgp
+    passphrase:
+    passphrase (repeat):
+    $ passphrase2pgp -load secret.pgp -public >Real-Name.pgp
+    $ passphrase2pgp -load secret.pgp -sign <data >data.sig
+
+Where `Real-Name.pgp`, `data`, and `data.sig` are distributed to others.
+Consuming these in GnuPG:
+
+    $ gpg --import Real-Name.pgp
+    $ gpg --verify data
 
 ## Philosophy
 
