@@ -88,7 +88,7 @@ It's also possible create detached signatures with passphrase2pgp:
     $ passphrase2pgp -uid "Real Name" >secret.pgp
     passphrase:
     passphrase (repeat):
-    $ passphrase2pgp -load secret.pgp -public >Real-Name.pgp
+    $ passphrase2pgp -load secret.pgp -public >Real-Name.asc
     $ passphrase2pgp -load secret.pgp -sign <data >data.sig
 
 Where `Real-Name.pgp`, `data`, and `data.sig` are distributed to others.
