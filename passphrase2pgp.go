@@ -24,8 +24,10 @@ import (
 )
 
 const (
-	kdfTime   = 8
-	kdfMemory = 1024 * 1024 // 1 GB
+	kdfTime      = 8
+	kdfMemory    = 1024 * 1024 // 1 GB
+	pubKeyLen    = 53
+	pubSubkeyLen = 58
 )
 
 // Returns data encoded as an OpenPGP multiprecision integer.
@@ -217,7 +219,7 @@ func signKey(ctx *signatureContext) []byte {
 	// Compute digest to be signed
 	h := sha256.New()
 	h.Write([]byte{0x99, 0, 51})
-	h.Write(ctx.skpacket[2:53]) // public key portion
+	h.Write(ctx.skpacket[2:pubKeyLen]) // public key portion
 	if sigType == 0x13 {
 		// Secret-Key signature
 		h.Write([]byte{0xb4, 0, 0, 0})
@@ -225,7 +227,7 @@ func signKey(ctx *signatureContext) []byte {
 	} else {
 		// Secret-Subkey signature
 		h.Write([]byte{0x99, 0, 56})
-		h.Write(ctx.sskpacket[2:58])
+		h.Write(ctx.sskpacket[2:pubSubkeyLen])
 	}
 	h.Write(sigpacket[2 : hashedLen+8])                 // trailer
 	h.Write([]byte{4, 0xff, 0, 0, 0, sigpacket[7] + 6}) // final trailer
@@ -297,11 +299,23 @@ func newSecretSubkeyPacket(seckey, pubkey []byte, created uint64) []byte {
 	return packet
 }
 
+func stripSecretKeyPacket(skpacket []byte) []byte {
+	skpacket[0] = 0xc6
+	skpacket[1] = pubKeyLen - 2
+	return skpacket[:pubKeyLen]
+}
+
+func stripSecretSubkeyPacket(sskpacket []byte) []byte {
+	sskpacket[0] = 0xce
+	sskpacket[1] = pubSubkeyLen - 2
+	return sskpacket[:pubSubkeyLen]
+}
+
 // Returns the Key ID from a Secret-Key Packet.
 func keyid(skpacket []byte) []byte {
 	h := sha1.New()
-	h.Write([]byte{0x99, 0, 51}) // "packet" length = 51
-	h.Write(skpacket[2:53])      // public key portion
+	h.Write([]byte{0x99, 0, 51})   // "packet" length = 51
+	h.Write(skpacket[2:pubKeyLen]) // public key portion
 	return h.Sum(nil)
 }
 
@@ -340,6 +354,7 @@ func main() {
 	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
 	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
 	signOnly := flag.Bool("sign-only", false, "don't output encryption subkey")
+	publicOnly := flag.Bool("public", false, "only output public key")
 	uid := flag.String("uid", "", "key user ID (required)")
 	flag.Parse()
 
@@ -375,7 +390,11 @@ func main() {
 
 	// Secret-Key Packet
 	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
-	buf.Write(skpacket)
+	if *publicOnly {
+		buf.Write(stripSecretKeyPacket(skpacket))
+	} else {
+		buf.Write(skpacket)
+	}
 
 	// User ID Packet
 	idpacket := newUserIDPacket(*uid)
@@ -395,7 +414,11 @@ func main() {
 		// Secret-Subkey Packet
 		subseckey, subpubkey := newCurve25519Keys(seed[32:])
 		sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
-		buf.Write(sskpacket)
+		if *publicOnly {
+			buf.Write(stripSecretSubkeyPacket(sskpacket))
+		} else {
+			buf.Write(sskpacket)
+		}
 
 		// Signature Packet (subkey)
 		ssigpacket := signKey(&signatureContext{
