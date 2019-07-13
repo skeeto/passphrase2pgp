@@ -126,7 +126,17 @@ func parse() *options {
 	}
 
 	if o.uid == "" && o.load == "" {
-		fatal("must have either -u or -l option")
+		// Using os.Getenv instead of os.LookupEnv because empty is just
+		// as good as not set. It means a user can do something like:
+		// $ EMAIL= passphrase2pgp ...
+		if email := os.Getenv("EMAIL"); email != "" {
+			if realname := os.Getenv("REALNAME"); realname != "" {
+				o.uid = fmt.Sprintf("%s <%s>", realname, email)
+			}
+		}
+		if o.uid == "" {
+			fatal("must have either -u or -l option")
+		}
 	}
 	if o.now {
 		o.created = time.Now().Unix()

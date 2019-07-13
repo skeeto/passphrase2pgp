@@ -28,10 +28,15 @@ Just pipe the output straight into GnuPG:
 
     $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
 
-**Either `-u` or `-l` is required.** The `-u` argument supplies a user
-ID string for the key to be generated. The `-l` option loads a
-previously generated key for use in other operations (signatures, print
-an ASCII-armored public key, etc.).
+**Either `-u` or `-l` is required.**
+
+* The `-u` option supplies the user ID string for the key to be
+  generated. If `-u` is missing, the `REALNAME` and `EMAIL`
+  environmental variables are used to construct a user ID, but only if
+  both are present.
+
+* The `-l` option loads a previously generated key for use in other
+  operations (signatures, print an ASCII-armored public key, etc.).
 
 There are two modes of operation: key generation (`-K`, default) and
 detached signatures (`-S`). Use `-h` for a complete option listing:
