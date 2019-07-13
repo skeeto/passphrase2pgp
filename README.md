@@ -28,16 +28,15 @@ Just pipe the output straight into GnuPG:
 
     $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
 
-**Either `-u` or `-l` is required.** The `-u` argument is used during
-key generation, so to reproduce the same key you will need to use
-exactly the same passphrase *and* User ID.
+**Either `-u` or `-l` is required.** The `-u` argument supplies a user
+ID string for the key to be generated. The `-l` option loads a
+previously generated key for use in other operations (signatures, print
+an ASCII-armored public key, etc.).
 
 There are two modes of operation: key generation (`-K`, default) and
-detached signatures (`-S`).
+detached signatures (`-S`). Use `-h` for a complete option listing:
 
-Use `-h` for an option listing:
-
-    Usage of ./passphrase2pgp:
+    Usage of passphrase2pgp:
       -K	output a new key (default true)
       -S	output detached signature for input
       -a	use ASCII armor
@@ -60,12 +59,12 @@ Use `-h` for an option listing:
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
 and its creation date.** Therefore using a different date with the same
-passphrase/uid will result in a different Key ID, despite the underlying
+passphrase/ID will result in a different Key ID, despite the underlying
 key being the same. For this reason, passphrase2pgp uses Unix epoch 0
 (January 1, 1970) as the default creation date. You can override this
-with `-date` or `-now`, but, to regenerate the same key in the future,
-you will need to use `-date` to reenter the exact time. If 1970 is a
-problem, then choose another memorable date.
+with `-t` or `-n`, but, to regenerate the same key in the future, you
+will need to use `-t` to reenter the exact time. If 1970 is a problem,
+then choose another memorable date.
 
 The `-x` (paranoid) setting quadruples the KDF difficulty. This will
 result in a different key for the same passphrase.
@@ -83,14 +82,15 @@ primary key as trusted.
     $ gpg --edit-key "Real Name"
     gpg> trust
 
-The "sign" mode (`-S`) creates detached signatures:
+The "sign" mode (`-S`) creates detached signatures on standard output
+from standard input:
 
     $ passphrase2pgp -S -u "Real Name <name@example.com>" <data >data.sig
     passphrase:
     passphrase (repeat):
 
-To perform multiple operations at once without regenerating the key for
-each operation, the load (`-l`) option exists to load a previously
+To perform multiple operations in a row without regenerating the key for
+each operation, use the load (`-l`) option to load a previously
 generated key:
 
     $ passphrase2pgp -u "Real Name <name@example.com>" >secret.pgp
