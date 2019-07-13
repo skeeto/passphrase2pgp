@@ -1,0 +1,328 @@
+package main
+
+import (
+	"bytes"
+	"crypto/sha1"
+	"crypto/sha256"
+	"encoding/binary"
+	"errors"
+	"io"
+	"math/bits"
+	"time"
+
+	"golang.org/x/crypto/ed25519"
+)
+
+const (
+	// SignKeyPubLen is the size of the public part of an OpenPGP packet.
+	SignKeyPubLen = 53
+	signKeySecLen = 3 + 32 + 2
+)
+
+// SignKey represents an Ed25519 sign key (EdDSA).
+type SignKey struct {
+	Key     ed25519.PrivateKey
+	created int64
+	packet  []byte
+}
+
+// Seed sets the 32-byte seed for a sign key.
+func (k *SignKey) Seed(seed []byte) {
+	k.Key = ed25519.NewKeyFromSeed(seed)
+	k.packet = nil
+}
+
+// Created returns the key's creation date in unix epoch seconds.
+func (k *SignKey) Created() int64 {
+	return k.created
+}
+
+// SetCreated sets the creation date in unix epoch seconds.
+func (k *SignKey) SetCreated(time int64) {
+	k.created = time
+	k.packet = nil
+}
+
+// Load entire key from OpenPGP input (Packet() output).
+func (k *SignKey) Load(r io.Reader) (err error) {
+	invalid := errors.New("invalid input")
+	defer func() {
+		if recover() != nil {
+			err = invalid
+		}
+	}()
+
+	// Read entire packet from input
+	var buf [257]byte
+	if _, err := r.Read(buf[:2]); err != nil {
+		return err
+	}
+	if buf[0] != 0xc0|5 {
+		return invalid
+	}
+	packet := buf[:2+buf[1]]
+	if _, err := r.Read(packet[2:]); err != nil {
+		return err
+	}
+
+	// Check various static bytes
+	if packet[2] != 0x04 || !bytes.Equal(packet[7:21], []byte{
+		22, 9,
+		0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
+		0x01, 0x07, 0x40,
+	}) || packet[53] != 0 {
+		return invalid
+	}
+
+	// Extract the fields we care about
+	pubkey := packet[21:53]
+	seckey, tail := mpiDecode(packet[54:], 32)
+	created := int64(binary.BigEndian.Uint32(packet[3:]))
+	if len(tail) != 2 {
+		return invalid
+	}
+
+	k.SetCreated(created)
+	k.Seed(seckey)
+	if !bytes.Equal(k.Pubkey(), pubkey) {
+		return invalid
+	}
+	return nil
+}
+
+// Seckey returns the public key part of a sign key.
+func (k *SignKey) Seckey() []byte {
+	return k.Key[:32]
+}
+
+// Pubkey returns the public key part of a sign key.
+func (k *SignKey) Pubkey() []byte {
+	return k.Key[32:]
+}
+
+// Packet returns an OpenPGP packet for a sign key.
+func (k *SignKey) Packet() []byte {
+	be := binary.BigEndian
+
+	if k.packet != nil {
+		return k.packet
+	}
+
+	packet := make([]byte, SignKeyPubLen+1, SignKeyPubLen+signKeySecLen)
+	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
+	packet[2] = 0x04     // packet version, new (4)
+
+	// Public Key
+	be.PutUint32(packet[3:], uint32(k.created)) // creation date
+	packet[7] = 22                              // algorithm, EdDSA
+	packet[8] = 9                               // OID length
+	// OID (1.3.6.1.4.1.11591.15.1)
+	oid := []byte{0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01}
+	copy(packet[9:], oid)
+	be.PutUint16(packet[18:], 263)  // public key length (always 263 bits)
+	packet[20] = 0x40               // MPI prefix
+	copy(packet[21:53], k.Pubkey()) // public key (32 bytes)
+
+	// Secret Key
+	packet[53] = 0 // string-to-key, unencrypted
+	mpikey := mpi(k.Seckey())
+	packet = append(packet, mpikey...)
+	// Append checksum
+	packet = packet[:len(packet)+2]
+	be.PutUint16(packet[len(packet)-2:], checksum(mpikey))
+
+	packet[1] = byte(len(packet) - 2) // packet length
+	k.packet = packet
+	return packet
+}
+
+// PubPacket returns a public key packet for this key.
+func (k *SignKey) PubPacket() []byte {
+	packet := make([]byte, SignKeyPubLen)
+	packet[0] = 0xc0 | 6 // packet header, Public-Key packet (6)
+	packet[1] = SignKeyPubLen - 2
+	copy(packet[2:], k.Packet()[2:])
+	return packet
+}
+
+// KeyID returns the Key ID for a sign key.
+func (k *SignKey) KeyID() []byte {
+	h := sha1.New()
+	h.Write([]byte{0x99, 0, 51})         // "packet" length = 51
+	h.Write(k.Packet()[2:SignKeyPubLen]) // public key portion
+	return h.Sum(nil)
+}
+
+// Bindable represents something that can be signed by a sign key.
+type Bindable interface {
+	// SignType returns the signature type ID needed for this object.
+	SignType() byte
+
+	// SignData returns the data to be concatenated with other hash input.
+	SignData() []byte
+}
+
+// Bind a Bindable object to this key using an OpenPGP packet.
+func (k *SignKey) Bind(s Bindable, created int64) []byte {
+	const hashedLen = 16
+	const fixedLen = 28
+	be := binary.BigEndian
+
+	packet := make([]byte, fixedLen, fixedLen+66)
+	packet[0] = 0xc0 | 2     // packet header, new format, Signature Packet (2)
+	packet[2] = 0x04         // packet version, new (4)
+	packet[3] = s.SignType() // signature type
+	packet[4] = 22           // public-key algorithm, EdDSA
+	packet[5] = 8            // hash algorithm, SHA-256
+
+	// hashed subpacket data length
+	be.PutUint16(packet[6:8], hashedLen)
+
+	// Signature Creation Time subpacket (length=5, type=2)
+	packet[8] = 5
+	packet[9] = 2
+	be.PutUint32(packet[10:14], uint32(created))
+
+	// Issuer subpacket (length=9, type=16)
+	packet[14] = 9
+	packet[15] = 16
+	copy(packet[16:24], k.KeyID()[12:20])
+	// An Issuer Fingerprint subpacket is unnecessary here because this
+	// is a self-signature, and so even the Issuer subpacket is already
+	// redundant. The recipient already knows which key we're talking
+	// about. Technically the Issuer subpacket is optional, but GnuPG
+	// will not import a key without it.
+
+	// Unhashed subpacket data (none)
+	be.PutUint16(packet[24:26], 0)
+
+	// Compute digest to be signed
+	h := sha256.New()
+
+	// Write public key
+	h.Write([]byte{0x99, 0, 51})
+	h.Write(k.PubPacket()[2:])
+
+	// Write target of Bind()
+	h.Write(s.SignData())
+
+	// Write hash trailers
+	h.Write(packet[2 : hashedLen+8])                 // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, hashedLen + 6}) // final trailer
+
+	// Compute hash and sign
+	sigsum := h.Sum(nil)
+	sig := ed25519.Sign(k.Key, sigsum)
+
+	// hash preview
+	copy(packet[26:28], sigsum[:2])
+
+	// signature
+	r := sig[:32]
+	packet = append(packet, mpi(r)...)
+	m := sig[32:]
+	packet = append(packet, mpi(m)...)
+
+	// Finalize
+	packet[1] = byte(len(packet)) - 2 // packet length
+	return packet
+}
+
+// Sign some data with this key using an OpenPGP signature packet.
+func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
+	const (
+		hashedLen = 39
+		fixedLen  = 51
+	)
+	be := binary.BigEndian
+
+	packet := make([]byte, fixedLen, fixedLen+66)
+	packet[0] = 0xc0 | 2 // packet header, new format, Signature Packet (2)
+	packet[2] = 0x04     // packet version, new (4)
+	packet[3] = 0x00     // signature type, binary document
+	packet[4] = 22       // public-key algorithm, EdDSA
+	packet[5] = 8        // hash algorithm, SHA-256
+	be.PutUint16(packet[6:8], hashedLen)
+
+	// Signature Creation Time subpacket (length=5, type=2)
+	packet[8] = 5
+	packet[9] = 2
+	created := time.Now().Unix()
+	be.PutUint32(packet[10:14], uint32(created))
+
+	// Issuer subpacket (length=9, type=16)
+	packet[14] = 9
+	packet[15] = 16
+	keyid := k.KeyID()
+	copy(packet[16:24], keyid[12:20])
+
+	// Issuer Fingerprint subpacket (length=22, type=33)
+	packet[24] = 22
+	packet[25] = 33
+	packet[26] = 04 // fingerprint version
+	copy(packet[27:47], keyid)
+
+	// Unhashed subpacket data (none)
+	be.PutUint16(packet[47:49], 0)
+
+	// Compute digest to be signed
+	h := sha256.New()
+	if _, err := io.Copy(h, src); err != nil {
+		return nil, err
+	}
+	h.Write(packet[2 : hashedLen+8])                 // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, hashedLen + 6}) // final trailer
+	sigsum := h.Sum(nil)
+	sig := ed25519.Sign(k.Key, sigsum)
+
+	// hash preview
+	copy(packet[49:51], sigsum[:2])
+
+	// signature
+	r := sig[:32]
+	packet = append(packet, mpi(r)...)
+	m := sig[32:]
+	packet = append(packet, mpi(m)...)
+
+	// Finalize
+	packet[1] = byte(len(packet)) - 2 // packet length
+	return packet, nil
+}
+
+// Returns data encoded as an OpenPGP multiprecision integer.
+func mpi(data []byte) []byte {
+	// Chop off leading zeros
+	for len(data) > 0 && data[0] == 0 {
+		data = data[1:]
+	}
+	// Zero-length is a special case (should never actually happen)
+	if len(data) == 0 {
+		return []byte{0, 0}
+	}
+	c := len(data)*8 - bits.LeadingZeros8(data[0])
+	mpi := []byte{byte(c >> 8), byte(c >> 0)}
+	return append(mpi, data...)
+}
+
+// Returns the decoded MPI integer and the remaining buffer.
+func mpiDecode(buf []byte, desired int) (i, remain []byte) {
+	bits := int(binary.BigEndian.Uint16(buf))
+	bytes := (bits + 7) / 8
+	if bytes < desired {
+		i = make([]byte, desired)
+		copy(i[desired-bytes:], buf[2:2+bytes])
+	} else {
+		i = buf[2 : 2+bytes]
+	}
+	remain = buf[2+bytes:]
+	return
+}
+
+// Returns the checksum for an MPI-encoded key.
+func checksum(mpi []byte) uint16 {
+	var checksum uint16
+	for _, b := range mpi {
+		checksum += uint16(b)
+	}
+	return checksum
+}

@@ -5,47 +5,22 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha1"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"math/bits"
 	"os"
 	"syscall"
 	"time"
 
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/curve25519"
-	"golang.org/x/crypto/ed25519"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
 const (
-	kdfTime      = 8
-	kdfMemory    = 1024 * 1024 // 1 GB
-	pubKeyLen    = 53
-	pubSubkeyLen = 58
+	kdfTime   = 8
+	kdfMemory = 1024 * 1024 // 1 GB
 )
-
-// Returns data encoded as an OpenPGP multiprecision integer.
-func mpi(data []byte) []byte {
-	// Chop off leading zeros
-	for len(data) > 0 && data[0] == 0 {
-		data = data[1:]
-	}
-	// Zero-length is a special case (should never actually happen)
-	if len(data) == 0 {
-		return []byte{0, 0}
-	}
-	c := len(data)*8 - bits.LeadingZeros8(data[0])
-	mpi := []byte{byte(c >> 8), byte(c >> 0)}
-	return append(mpi, data...)
-}
 
 // Print the message like fmt.Printf() and then os.Exit(1).
 func fatal(format string, args ...interface{}) {
@@ -100,563 +75,156 @@ func firstLine(filename string) ([]byte, error) {
 // Derive a 64-byte seed from the given passphrase. The scale factor
 // scales up the difficulty proportional to scale*scale.
 func kdf(passphrase, uid []byte, scale int) []byte {
-	var time uint32 = uint32(kdfTime * scale)
-	var memory uint32 = uint32(kdfMemory * scale)
-	var threads uint8 = 1
+	time := uint32(kdfTime * scale)
+	memory := uint32(kdfMemory * scale)
+	threads := uint8(1)
 	return argon2.IDKey(passphrase, uid, time, memory, threads, 64)
 }
 
-// Returns a Secret-Key Packet for a key pair.
-func newSecretKeyPacket(seckey, pubkey []byte, created int64) []byte {
-	packet := []byte{
-		0xc5, // packet header, new format, Secret-Key Packet (5)
-		0,    // packet length
-		0x04, // packet version, new (4)
-
-		// Public Key
-		// creation date
-		byte(created >> 24),
-		byte(created >> 16),
-		byte(created >> 8),
-		byte(created >> 0),
-		22, // algorithm, EdDSA
-		9,  // OID length
-		// OID (1.3.6.1.4.1.11591.15.1)
-		0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
-		// public key length (always 263 bits)
-		0x01, 0x07,
-		0x40, // MPI prefix
-		// public key (32 bytes)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-
-		// Secret Key
-		0, // string-to-key, unencrypted
-	}
-	copy(packet[21:53], pubkey)
-
-	// append MPI-encoded key
-	secmpi := mpi(seckey)
-	packet = append(packet, secmpi...)
-
-	// compute and append checksum
-	var checksum uint16
-	for _, b := range secmpi {
-		checksum += uint16(b)
-	}
-	packet = append(packet, []byte{
-		byte(checksum >> 8), byte(checksum >> 0),
-	}...)
-
-	packet[1] = byte(len(packet) - 2)
-	return packet
+type options struct {
+	sign        bool // mode
+	keygen      bool // mode
+	armor       bool
+	created     int64
+	fingerprint bool
+	help        bool
+	input       string
+	load        string
+	now         bool
+	paranoid    bool
+	public      bool
+	repeat      int
+	subkey      bool
+	uid         string
 }
 
-// Return a primary key and User ID loaded from a reader. Only keys
-// previously output by passphrase2pgp are supported.
-func load(r io.Reader) (key ed25519.PrivateKey, uid []byte, err error) {
-	invalid := errors.New("invalid input key")
-	defer func() {
-		if recover() != nil {
-			err = invalid
-		}
-	}()
+func parse() *options {
+	var o options
 
-	buf, err := ioutil.ReadAll(r)
-	if err != nil {
-		return nil, nil, err
+	flag.BoolVar(&o.sign, "S", false, "output detached signature for input")
+	flag.BoolVar(&o.keygen, "K", true, "output a new key")
+
+	flag.BoolVar(&o.armor, "a", false, "use ASCII armor")
+	flag.Int64Var(&o.created, "t", 0, "creation date (unix epoch seconds)")
+	flag.BoolVar(&o.fingerprint, "f", false, "also show fingerprint")
+	flag.BoolVar(&o.help, "h", false, "print this help message")
+	flag.StringVar(&o.input, "i", "", "read passphrase from file")
+	flag.StringVar(&o.load, "l", "", "load key from file instead")
+	flag.BoolVar(&o.now, "n", false, "use current time as creation date")
+	flag.BoolVar(&o.paranoid, "x", false, "paranoid mode")
+	flag.BoolVar(&o.public, "p", false, "only output public key")
+	flag.IntVar(&o.repeat, "r", 1, "number of repeated passphrase prompts")
+	flag.BoolVar(&o.subkey, "s", false, "also output encryption subkey")
+	flag.StringVar(&o.uid, "u", "", "user ID for the key")
+
+	flag.Parse()
+
+	if o.help {
+		flag.CommandLine.SetOutput(os.Stdout)
+		flag.Usage()
+		os.Exit(0)
 	}
 
-	if buf[0] != 0xc5 {
-		return nil, nil, invalid
+	if o.uid == "" && o.load == "" {
+		fatal("must have either -u or -l option")
 	}
-	plen := int(buf[1])
-	skpacket := buf[:plen] // chop off checksum
-	pubkey := skpacket[pubKeyLen-32 : pubKeyLen]
-
-	seckey := skpacket[pubKeyLen+3:]
-	seckey = append(make([]byte, 32-len(seckey)), seckey...)
-
-	key = ed25519.NewKeyFromSeed(seckey)
-	if !bytes.Equal(pubkey, key[32:]) {
-		return nil, nil, invalid
+	if o.now {
+		o.created = time.Now().Unix()
 	}
-
-	buf = buf[plen+2:] // chop off Secret-Key Packet
-
-	if buf[0] != 0xcd {
-		return nil, nil, invalid
-	}
-	plen = int(buf[1])
-	idpacket := buf[:plen+2]
-	uid = idpacket[2:]
-
-	return
-}
-
-// Returns a User ID Packet for the given identity.
-func newUserIDPacket(uid string) []byte {
-	return append([]byte{
-		0xcd,           // packet header, new format, User ID Packet (13)
-		byte(len(uid)), // packet length
-	}, []byte(uid)...)
-}
-
-type signatureContext struct {
-	key                           ed25519.PrivateKey
-	skpacket, sskpacket, idpacket []byte
-	created                       int64
-	mdc                           bool
-}
-
-// Returns a Signature Packet binding a Secret-Key Packet and User ID Packet.
-func signKey(ctx *signatureContext) []byte {
-	keyid := keyid(ctx.skpacket)
-	var sigType byte
-	if ctx.sskpacket == nil {
-		sigType = 0x13 // Positive certification of a User ID
-	} else {
-		sigType = 0x18 // Subkey Binding Signature
-	}
-
-	buf := bytes.NewBuffer([]byte{
-		0xc2,    // packet header, new format, Signature Packet (2)
-		0,       // packet length
-		0x04,    // packet version, new (4)
-		sigType, // signature type
-		22,      // public-key algorithm, EdDSA
-		8,       // hash algorithm, SHA-256
-		0, 0,    // hashed subpacket data length
-	})
-
-	// Signature Creation Time subpacket (length=5, type=2)
-	buf.Write([]byte{
-		5, 2,
-		byte(ctx.created >> 24),
-		byte(ctx.created >> 16),
-		byte(ctx.created >> 8),
-		byte(ctx.created >> 0),
-	})
-
-	// Issuer subpacket (length=9, type=16)
-	buf.Write([]byte{
-		9, 16,
-	})
-	buf.Write(keyid[12:])
-	// An Issuer Fingerprint subpacket is unnecessary here because this
-	// is a self-signature, and so even the Issuer subpacket is already
-	// redundant. The recipient already knows which key we're talking
-	// about. Technically the Issuer subpacket is optional, but GnuPG
-	// will not import a key without it.
-
-	if ctx.mdc {
-		// Features subpacket
-		buf.Write([]byte{
-			2, 30,
-			0x01, // MDC
-		})
-	}
-
-	// Actual hashed subpacket data length
-	hashedLen := buf.Len() - 8
-
-	// Unhashed subpacket data (none)
-	buf.Write([]byte{
-		0, 0,
-	})
-
-	// Fill out hashed data length
-	sigpacket := buf.Bytes()
-	binary.BigEndian.PutUint16(sigpacket[6:], uint16(hashedLen))
-
-	// Compute digest to be signed
-	h := sha256.New()
-	h.Write([]byte{0x99, 0, 51})
-	h.Write(ctx.skpacket[2:pubKeyLen]) // public key portion
-	if sigType == 0x13 {
-		// Secret-Key signature
-		h.Write([]byte{0xb4, 0, 0, 0})
-		h.Write(ctx.idpacket[1:])
-	} else {
-		// Secret-Subkey signature
-		h.Write([]byte{0x99, 0, 56})
-		h.Write(ctx.sskpacket[2:pubSubkeyLen])
-	}
-	h.Write(sigpacket[2 : hashedLen+8])                 // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, sigpacket[7] + 6}) // final trailer
-	sigsum := h.Sum(nil)
-	sig := ed25519.Sign(ctx.key, sigsum)
-
-	// Fill out hash preview
-	buf.Write(sigsum[0:2])
-
-	// Fill out signature
-	r := sig[:32]
-	buf.Write(mpi(r))
-	m := sig[32:]
-	buf.Write(mpi(m))
-
-	// Finalize
-	sigpacket = buf.Bytes()
-	sigpacket[1] = byte(len(sigpacket)) - 2
-	return sigpacket
-}
-
-func newSecretSubkeyPacket(seckey, pubkey []byte, created int64) []byte {
-	packet := []byte{
-		0xc7, // packet header, new format, Secret-Subkey Packet (7)
-		0,    // packet length
-		0x04, // packet version, new (4)
-
-		// Public Key
-		// creation date
-		byte(created >> 24),
-		byte(created >> 16),
-		byte(created >> 8),
-		byte(created >> 0),
-		18, // algorithm, Elliptic Curve
-		10, // OID length
-		// OID (1.3.6.1.4.1.3029.1.5.1)
-		0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
-		// public key length (always 263 bits)
-		0x01, 0x07,
-		0x40, // MPI prefix
-		// public key (32 bytes)
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-		// KDF parameters
-		3,    // length
-		0x01, // reserved (1)
-		0x08, // SHA-256
-		0x07, // AES-128? (spec is incorrect)
-
-		// Secret Key
-		0, // string-to-key, unencrypted
-	}
-	copy(packet[22:54], pubkey)
-
-	// append MPI-encoded key
-	secmpi := mpi(reverse(seckey))
-	packet = append(packet, secmpi...)
-
-	// compute and append checksum
-	var checksum uint16
-	for _, b := range secmpi {
-		checksum += uint16(b)
-	}
-	packet = append(packet, []byte{
-		byte(checksum >> 8), byte(checksum >> 0),
-	}...)
-
-	packet[1] = byte(len(packet) - 2)
-	return packet
-}
-
-// Returns a Signature Packet for an input.
-func sign(src io.Reader, keyid []byte, key ed25519.PrivateKey) ([]byte, error) {
-	created := time.Now().Unix()
-	buf := bytes.NewBuffer([]byte{
-		0xc2, // packet header, new format, Signature Packet (2)
-		0,    // packet length
-		0x04, // packet version, new (4)
-		0x00, // signature type, binary document
-		22,   // public-key algorithm, EdDSA
-		8,    // hash algorithm, SHA-256
-		0, 0, // hashed subpacket data length
-	})
-
-	// Signature Creation Time subpacket (length=5, type=2)
-	buf.Write([]byte{
-		5, 2,
-		byte(created >> 24),
-		byte(created >> 16),
-		byte(created >> 8),
-		byte(created >> 0),
-	})
-
-	// Issuer subpacket (length=9, type=16)
-	buf.Write([]byte{
-		9, 16,
-	})
-	buf.Write(keyid[12:])
-
-	// Issuer Fingerprint subpacket (length=22, type=33)
-	buf.Write([]byte{
-		22, 33,
-		04, // fingerprint version
-	})
-	buf.Write(keyid)
-
-	// Actual hashed subpacket data length
-	hashedLen := buf.Len() - 8
-
-	// Unhashed subpacket data (none)
-	buf.Write([]byte{
-		0, 0,
-	})
-
-	// Fill out hashed data length
-	sigpacket := buf.Bytes()
-	binary.BigEndian.PutUint16(sigpacket[6:], uint16(hashedLen))
-
-	// Compute digest to be signed
-	h := sha256.New()
-	if _, err := io.Copy(h, src); err != nil {
-		return nil, err
-	}
-	h.Write(sigpacket[2 : hashedLen+8])                 // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, sigpacket[7] + 6}) // final trailer
-	sigsum := h.Sum(nil)
-	sig := ed25519.Sign(key, sigsum)
-
-	// Fill out hash preview
-	buf.Write(sigsum[0:2])
-
-	// Fill out signature
-	r := sig[:32]
-	buf.Write(mpi(r))
-	m := sig[32:]
-	buf.Write(mpi(m))
-
-	// Finalize
-	sigpacket = buf.Bytes()
-	sigpacket[1] = byte(len(sigpacket)) - 2
-	return sigpacket, nil
-}
-
-// Modify and return packet with secret key removed.
-func stripSecretKeyPacket(skpacket []byte) []byte {
-	skpacket[0] = 0xc6
-	skpacket[1] = pubKeyLen - 2
-	return skpacket[:pubKeyLen]
-}
-
-// Modify and return packet with secret subkey removed.
-func stripSecretSubkeyPacket(sskpacket []byte) []byte {
-	sskpacket[0] = 0xce
-	sskpacket[1] = pubSubkeyLen - 2
-	return sskpacket[:pubSubkeyLen]
-}
-
-// Returns the Key ID from a Secret-Key Packet.
-func keyid(skpacket []byte) []byte {
-	h := sha1.New()
-	h.Write([]byte{0x99, 0, 51})   // "packet" length = 51
-	h.Write(skpacket[2:pubKeyLen]) // public key portion
-	return h.Sum(nil)
-}
-
-// Return the Curve25519 public key for a secret key.
-func x25519(seckey []byte) []byte {
-	var xpubkey [32]byte
-	var xseckey [32]byte
-	copy(xseckey[:], seckey)
-	curve25519.ScalarBaseMult(&xpubkey, &xseckey)
-	return xpubkey[:]
-}
-
-// Return a reversed copy.
-func reverse(b []byte) []byte {
-	c := make([]byte, len(b))
-	for i, v := range b {
-		c[len(c)-i-1] = v
-	}
-	return c
-}
-
-// Return a Curve25519 keypair from a seed.
-func newCurve25519Keys(seed []byte) (seckey, pubkey []byte) {
-	seckey = append(seed[:0:0], seed...)
-	seckey[0] &= 248
-	seckey[31] &= 127
-	seckey[31] |= 64
-	pubkey = x25519(seckey)
-	return
-}
-
-func crc24(buf []byte) int32 {
-	const (
-		crc24Init = 0x0b704ce
-		crc24Poly = 0x1864cfb
-	)
-	var crc int32 = crc24Init
-	for _, b := range buf {
-		crc ^= int32(b) << 16
-		for i := 0; i < 8; i++ {
-			crc <<= 1
-			if crc&0x1000000 != 0 {
-				crc ^= crc24Poly
-			}
-		}
-	}
-	return crc & 0xFFFFFF
-}
-
-// wrapper is an io.Writer filter that inserts regular hard line breaks.
-type wrapper struct {
-	w     io.Writer
-	max   int
-	count int
-}
-
-func (w *wrapper) Write(p []byte) (int, error) {
-	for len(p) > 0 {
-		if w.count == w.max {
-			if _, err := w.w.Write([]byte{10}); err != nil {
-				return 0, err
-			}
-			w.count = 0
-		}
-		left := w.max - w.count
-		var line []byte
-		if len(p) > left {
-			line = p[:left]
-		} else {
-			line = p
-		}
-		p = p[len(line):]
-		w.count += len(line)
-		_, err := w.w.Write(line)
-		if err != nil {
-			return 0, err
-		}
-	}
-	return len(p), nil
+	return &o
 }
 
 func main() {
-	created := flag.Int64("date", 0, "creation date (unix epoch seconds)")
-	fingerprint := flag.Bool("fingerprint", false, "also show fingerprint")
-	genSubkey := flag.Bool("subkey", false, "also output an encryption subkey")
-	loadKey := flag.String("load", "",
-		"load key from file instead of generating")
-	now := flag.Bool("now", false, "use current time as creation date")
-	paranoid := flag.Bool("paranoid", false, "paranoid mode")
-	ppFile := flag.String("passphrase-file", "", "read passphrase from file")
-	publicOnly := flag.Bool("public", false, "only output public key")
-	repeat := flag.Uint("repeat", 1, "number of repeated passphrase prompts")
-	signOnly := flag.Bool("sign", false, "output detached signature for input")
-	uid := flag.String("uid", "", "key user ID (required)")
-	flag.Parse()
+	var key SignKey
+	var subkey EncryptKey
+	var userid UserID
 
-	if *uid == "" && *loadKey == "" {
-		fatal("missing User ID (-uid) option")
-	}
-	if *now {
-		*created = time.Now().Unix()
-	}
+	options := parse()
 
-	var key ed25519.PrivateKey
-	var seed []byte
-	if *loadKey != "" {
-		// Load previously-generated key
-		f, err := os.Open(*loadKey)
-		if err != nil {
-			fatal("%s", err)
-		}
-		var uidbytes []byte
-		key, uidbytes, err = load(f)
-		*uid = string(uidbytes)
-		*genSubkey = false
-
-	} else {
-		// Derive a key from the passphrase
+	if options.load == "" {
+		// Read the passphrase from the terminal
 		var passphrase []byte
 		var err error
-		if *ppFile != "" {
-			passphrase, err = firstLine(*ppFile)
+		if options.input != "" {
+			passphrase, err = firstLine(options.input)
 		} else {
-			passphrase, err = readPassphrase(int(*repeat))
+			passphrase, err = readPassphrase(options.repeat)
 		}
 		if err != nil {
 			fatal("%s", err)
 		}
+
+		// Run KDF on passphrase
 		scale := 1
-		if *paranoid {
+		if options.paranoid {
 			scale = 2 // actually 4x difficulty
 		}
-		seed = kdf(passphrase, []byte(*uid), scale)
-		key = ed25519.NewKeyFromSeed(seed[:32])
-	}
-	seckey := key[:32]
-	pubkey := key[32:]
+		seed := kdf(passphrase, []byte(options.uid), scale)
 
-	// Buffer output and perform all writes at once at the end
-	var buf bytes.Buffer
+		key.Seed(seed[:32])
+		key.SetCreated(options.created)
+		userid = UserID{ID: []byte(options.uid)}
+		if options.subkey {
+			subkey.Seed(seed[32:])
+			subkey.SetCreated(options.created)
+		}
 
-	// Secret-Key Packet
-	skpacket := newSecretKeyPacket(seckey, pubkey, *created)
-	keyid := keyid(skpacket)
-	if *fingerprint {
-		fmt.Fprintf(os.Stderr, "%X\n", keyid)
-	}
-	if *signOnly {
-		packet, err := sign(os.Stdin, keyid, key)
+	} else {
+		// Load passphrase from the first line of a file
+		f, err := os.Open(options.load)
 		if err != nil {
 			fatal("%s", err)
 		}
-		if _, err := os.Stdout.Write(packet); err != nil {
+		defer f.Close()
+		if err := key.Load(f); err != nil {
 			fatal("%s", err)
 		}
-		return
-	}
-	if *publicOnly {
-		buf.Write(stripSecretKeyPacket(skpacket))
-	} else {
-		buf.Write(skpacket)
+		if err := userid.Load(f); err != nil {
+			fatal("%s", err)
+		}
+		options.created = key.Created()
 	}
 
-	// User ID Packet
-	idpacket := newUserIDPacket(*uid)
-	buf.Write(idpacket)
+	if options.fingerprint {
+		fmt.Fprintf(os.Stderr, "%X\n", key.KeyID())
+	}
 
-	// Signature Packet (primary key)
-	sigpacket := signKey(&signatureContext{
-		key:      key,
-		skpacket: skpacket,
-		idpacket: idpacket,
-		created:  *created,
-		mdc:      *genSubkey,
-	})
-	buf.Write(sigpacket)
+	// Buffer that will be output
+	var output []byte
 
-	if *genSubkey {
-		// Secret-Subkey Packet
-		subseckey, subpubkey := newCurve25519Keys(seed[32:])
-		sskpacket := newSecretSubkeyPacket(subseckey, subpubkey, *created)
-		if *publicOnly {
-			buf.Write(stripSecretSubkeyPacket(sskpacket))
-		} else {
-			buf.Write(sskpacket)
+	if options.sign {
+		var err error
+		output, err = key.Sign(os.Stdin)
+		if err != nil {
+			fatal("%s", err)
 		}
 
-		// Signature Packet (subkey)
-		ssigpacket := signKey(&signatureContext{
-			key:       key,
-			skpacket:  skpacket,
-			sskpacket: sskpacket,
-			created:   *created,
-		})
-		buf.Write(ssigpacket)
+	} else {
+		var buf bytes.Buffer
+		if options.public {
+			buf.Write(key.PubPacket())
+			buf.Write(userid.Packet())
+			buf.Write(key.Bind(&userid, options.created))
+			if options.subkey {
+				buf.Write(subkey.PubPacket())
+				buf.Write(key.Bind(&subkey, options.created))
+			}
+		} else {
+			buf.Write(key.Packet())
+			buf.Write(userid.Packet())
+			buf.Write(key.Bind(&userid, options.created))
+			if options.subkey {
+				buf.Write(subkey.Packet())
+				buf.Write(key.Bind(&subkey, options.created))
+			}
+		}
+		output = buf.Bytes()
 	}
 
-	output := buf.Bytes()
-	if *publicOnly {
-		// Wrap in ASCII armor
-		var asc bytes.Buffer
-		asc.WriteString("-----BEGIN PGP PUBLIC KEY BLOCK-----\n\n")
-		wrap := &wrapper{&asc, 78, 0}
-		b64 := base64.NewEncoder(base64.RawStdEncoding, wrap)
-		b64.Write(output)
-		b64.Close()
-		asc.WriteString("\n=")
-		b64 = base64.NewEncoder(base64.RawStdEncoding, &asc)
-		crc := crc24(output)
-		b64.Write([]byte{byte(crc >> 16), byte(crc >> 8), byte(crc)})
-		b64.Close()
-		asc.WriteString("\n-----END PGP PUBLIC KEY BLOCK-----\n")
-		output = asc.Bytes()
+	if options.armor {
+		output = Armor(output)
 	}
+
 	if _, err := os.Stdout.Write(output); err != nil {
 		fatal("%s", err)
 	}

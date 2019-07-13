@@ -26,37 +26,37 @@ Requires Go 1.9 or later.
 
 Just pipe the output straight into GnuPG:
 
-    $ passphrase2pgp -uid "Real Name <name@example.com>" | gpg --import
+    $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
 
-**The `-uid` argument is required.** It's also used as an input during
-key generation, so to reproduce the same key, you will need to use
+**Either `-u` or `-l` is required.** The `-u` argument is used during
+key generation, so to reproduce the same key you will need to use
 exactly the same passphrase *and* User ID.
 
-Use `-help` for an option listing:
+There are two modes of operation: key generation (`-K`, default) and
+detached signatures (`-S`).
 
-    Usage of passphrase2pgp:
-      -date int
-        	creation date (unix epoch seconds)
-      -fingerprint
-        	also show fingerprint
-      -load string
-        	load key from file instead of generating
-      -now
-        	use current time as creation date
-      -paranoid
-        	paranoid mode
-      -passphrase-file string
+Use `-h` for an option listing:
+
+    Usage of ./passphrase2pgp:
+      -K	output a new key (default true)
+      -S	output detached signature for input
+      -a	use ASCII armor
+      -f	also show fingerprint
+      -h	print this help message
+      -i string
         	read passphrase from file
-      -public
-        	only output public key
-      -repeat uint
+      -l string
+        	load key from file instead
+      -n	use current time as creation date
+      -p	only output public key
+      -r int
         	number of repeated passphrase prompts (default 1)
-      -sign
-        	output detached signature for input
-      -subkey
-        	also output an encryption subkey
-      -uid string
-        	key user ID (required)
+      -s	also output encryption subkey
+      -t int
+        	creation date (unix epoch seconds)
+      -u string
+        	user ID for the key
+      -x	paranoid mode
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
 and its creation date.** Therefore using a different date with the same
@@ -67,8 +67,8 @@ with `-date` or `-now`, but, to regenerate the same key in the future,
 you will need to use `-date` to reenter the exact time. If 1970 is a
 problem, then choose another memorable date.
 
-The `-paranoid` setting quadruples the KDF difficulty. This will result
-in a different key for the same passphrase.
+The `-x` (paranoid) setting quadruples the KDF difficulty. This will
+result in a different key for the same passphrase.
 
 Once your key is generated, you may want to secure it with a protection
 passphrase on your GnuPG keychain in order to protect it at rest:
@@ -83,15 +83,23 @@ primary key as trusted.
     $ gpg --edit-key "Real Name"
     gpg> trust
 
-It's also possible create detached signatures with passphrase2pgp:
+The "sign" mode (`-S`) creates detached signatures:
 
-    $ passphrase2pgp -uid "Real Name" >secret.pgp
+    $ passphrase2pgp -S -u "Real Name <name@example.com>" <data >data.sig
     passphrase:
     passphrase (repeat):
-    $ passphrase2pgp -load secret.pgp -public >Real-Name.asc
-    $ passphrase2pgp -load secret.pgp -sign <data >data.sig
 
-Where `Real-Name.pgp`, `data`, and `data.sig` are distributed to others.
+To perform multiple operations at once without regenerating the key for
+each operation, the load (`-l`) option exists to load a previously
+generated key:
+
+    $ passphrase2pgp -u "Real Name <name@example.com>" >secret.pgp
+    passphrase:
+    passphrase (repeat):
+    $ passphrase2pgp -l secret.pgp -a -p >Real-Name.asc
+    $ passphrase2pgp -S -l secret.pgp <data >data.sig
+
+Where `Real-Name.asc`, `data`, and `data.sig` are distributed to others.
 Consuming these in GnuPG:
 
     $ gpg --import Real-Name.asc

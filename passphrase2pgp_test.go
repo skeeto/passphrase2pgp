@@ -25,6 +25,37 @@ func TestMpi(t *testing.T) {
 	}
 }
 
+func TestMpiDecode(t *testing.T) {
+	table := []struct {
+		input     []byte
+		n         int
+		i, remain []byte
+	}{
+		{mpi([]byte{0x01}), 4,
+			[]byte{0x00, 0x00, 0x00, 0x01}, []byte{}},
+		{mpi([]byte{0x80}), 3,
+			[]byte{0x00, 0x00, 0x80}, []byte{}},
+		{mpi([]byte{0x80, 0x00}), 2,
+			[]byte{0x80, 0x00}, []byte{}},
+		{mpi([]byte{0x80, 0x00}), 3,
+			[]byte{0x00, 0x80, 0x00}, []byte{}},
+		{append(mpi([]byte{0x80, 0x00}), 0xde, 0xad), 2,
+			[]byte{0x80, 0x00}, []byte{0xde, 0xad}},
+		{append(mpi([]byte{0x80, 0x00}), 0xde, 0xad), 3,
+			[]byte{0x00, 0x80, 0x00}, []byte{0xde, 0xad}},
+	}
+
+	for _, row := range table {
+		i, remain := mpiDecode(row.input, row.n)
+		if !bytes.Equal(i, row.i) || !bytes.Equal(remain, row.remain) {
+			t.Errorf("mpiDecode([%# x], %d), "+
+				"got ([%# x], [%# x]), "+
+				"want ([%# x], [%# x])",
+				row.input, row.n, i, remain, row.i, row.remain)
+		}
+	}
+}
+
 func TestCRC24(t *testing.T) {
 	table := []struct {
 		input string
