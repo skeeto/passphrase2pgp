@@ -88,13 +88,9 @@ func (k *EncryptKey) Packet() []byte {
 	// append MPI-encoded key
 	mpikey := mpi(reverse(k.Seckey()))
 	packet = append(packet, mpikey...)
-	// compute and append checksum
-	var checksum uint16
-	for _, b := range mpikey {
-		checksum += uint16(b)
-	}
+	// Append checksum
 	packet = packet[:len(packet)+2]
-	be.PutUint16(packet[len(packet)-2:], checksum)
+	be.PutUint16(packet[len(packet)-2:], checksum(mpikey))
 
 	packet[1] = byte(len(packet) - 2) // packet length
 	k.packet = packet

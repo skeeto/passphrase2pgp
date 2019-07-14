@@ -21,23 +21,12 @@ func (u *UserID) Packet() []byte {
 
 // Load from OpenPGP input (Packet() output).
 func (u *UserID) Load(r io.Reader) (err error) {
-	invalid := errors.New("invalid input")
-	defer func() {
-		if recover() != nil {
-			err = invalid
-		}
-	}()
-
-	var buf [257]byte
-	if _, err := r.Read(buf[:2]); err != nil {
+	packet, err := readPacket(r)
+	if err != nil {
 		return err
 	}
-	if buf[0] != 0xc0|13 {
-		return invalid
-	}
-	packet := buf[:2+buf[1]]
-	if _, err := r.Read(packet[2:]); err != nil {
-		return err
+	if packet[0] != 0xc0|13 {
+		return errors.New("invalid input")
 	}
 
 	u.ID = packet[2:]
