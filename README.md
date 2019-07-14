@@ -28,92 +28,88 @@ Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
 
     $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
 
-Usage summary:
+**Either `--uid` (`-u`) or `--load` (`-l`) is required.**
 
-    passphrase2pgp -K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]
-    passphrase2pgp -S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]
-
-**Either `-u` or `-l` is required.**
-
-* The `-u` option supplies the user ID string for the key to be
-  generated. If `-u` is missing, the `REALNAME` and `EMAIL`
+* The `--uid` (`-u`) option supplies the user ID string for the key to
+  be generated. If `--uid` is missing, the `REALNAME` and `EMAIL`
   environmental variables are used to construct a user ID, but only if
   both are present.
 
-* The `-l` option loads a previously generated key for use in other
-  operations (signatures, print an ASCII-armored public key, etc.).
+* The `--load` (`-l`) option loads a previously generated key for use in
+  other operations (signature creation, ASCII-armored public key, etc.).
 
 There are two modes of operation:
 
-* Key generation (`-K`, default): Writes a key to standard output. This
-  is a secret key by default, but `-p` restricts it to a public key.
+* Key generation (`--keygen`, `-K`) [default]: Writes a key to standard
+  output. This is a secret key by default, but `--public` (`-p`)
+  restricts it to a public key.
 
-* Detached signatures (`-S`): Signs one or more input files. Unless `-l`
-  is used, also generates a key, but that key is not output. If no files
-  are given, signs standard input to standard output. Otherwise for each
-  argument `file` creates `file.sig` with a detached signature. If armor
-  is enabled (`-a`), the file is named `file.asc`.
+* Detached signatures (`--sign`, `-S`): Signs one or more input files.
+  Unless `--load` is used, also generates a key, but that key is not
+  output. If no files are given, signs standard input to standard
+  output. Otherwise for each argument `file` creates `file.sig` with a
+  detached signature. If armor is enabled (`--armor`, `-a`), the file is
+  named `file.asc`.
 
-Use `-h` for a full option listing:
+Use `--help` (`-h`) for a full option listing:
 
-    Usage of passphrase2pgp:
-      -K	output a new key (default true)
-      -S	output detached signature for input
-      -a	use ASCII armor
-      -f	also show fingerprint
-      -h	print this help message
-      -i string
-        	read passphrase from file
-      -l string
-        	load key from file instead
-      -n	use current time as creation date
-      -p	only output public key
-      -r int
-        	number of repeated passphrase prompts (default 1)
-      -s	also output encryption subkey
-      -t int
-        	creation date (unix epoch seconds)
-      -u string
-        	user ID for the key
-      -x	paranoid mode
+    Usage:
+       passphrase2pgp -K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]
+       passphrase2pgp -S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]
+    Modes:
+       -S, --sign    create a detached signature
+       -K, --keygen  generate and output a key (default mode)
+    Options:
+       -a, --armor            encode output in ASCII armor
+       -f, --fingerprint      also print fingerprint to standard error
+       -h, --help             print this help message
+       -i, --input FILE       read passphrase from file
+       -l, --load FILE        load key from file instead of generating
+       -n, --now              use current time as creation date
+       -p, --public           only output the public key
+       -r, --repeat N         number of repeated passphrase prompts
+       -s, --subkey           also output an encryption subkey
+       -t, --time SECONDS     key creation date (unix epoch seconds)
+       -u, --uid USERID       user ID for the key
+       -x, --paranoid         increase key generation costs
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
 and its creation date.** Therefore using a different date with the same
 passphrase/ID will result in a different Key ID, despite the underlying
 key being the same. For this reason, passphrase2pgp uses Unix epoch 0
 (January 1, 1970) as the default creation date. You can override this
-with `-t` or `-n`, but, to regenerate the same key in the future, you
-will need to use `-t` to reenter the exact time. If 1970 is a problem,
-then choose another memorable date.
+with `--time` (`-t`) or `--now` (`-n`), but, to regenerate the same key
+in the future, you will need to use `--time` to reenter the exact time.
+If 1970 is a problem, then choose another memorable date.
 
-The `-x` (paranoid) setting quadruples the KDF difficulty. This will
+The `--paranoid` (`-x`) setting quadruples the KDF difficulty. This will
 result in a different key for the same passphrase.
 
 ### Examples
 
 Generate a private key and send it to GnuPG:
 
-    $ passphrase2pgp -u "..." | gnupg --import
+    $ passphrase2pgp --uid "..." | gnupg --import
 
 Create an armored public key for publishing and sharing:
 
-    $ passphrase2pgp -u "..." -a -p > Real-Name.asc
+    $ passphrase2pgp --uid "..." --armor --public > Real-Name.asc
 
-Determine `-u` from the environment so that you don't need to type it
+Determine `--uid` from the environment so that you don't need to type it
 out every time you use passphrase2pgp:
 
     $ export REALNAME="Real Name"
     $ export EMAIL="name@example.com"
-    $ passphrase2pgp -a -p > Real-Name.asc
+    $ passphrase2pgp -ap > Real-Name.asc
 
 Generate a private key and save it to a file in OpenPGP format for later
 use below:
 
-    $ passphrase2pgp -u "..." > secret.pgp
+    $ passphrase2pgp --uid "..." > secret.pgp
 
 Created detached signatures (`-S`) for some files:
 
-    $ passphrase2pgp -S -l secret.pgp document.txt avatar.jpg
+    $ passphrase2pgp -S --load secret.pgp document.txt avatar.jpg
 
 This will create `document.txt.sig` and `avatar.jpg.sig`. The other end
 would use GnuPG to verify the signatures like so:
@@ -126,11 +122,11 @@ Or, in order to avoid entering the passphrase again and waiting on key
 generation, use the previously saved private key to sign some files
 without entering your passphrase:
 
-    $ passphrase2pgp -S -l secret.pgp document.txt avatar.jpg
+    $ passphrase2pgp -S --load secret.pgp document.txt avatar.jpg
 
 Same, but now with ASCII-armored signatures:
 
-    $ passphrase2pgp -S -l secret.pgp -a document.txt avatar.jpg
+    $ passphrase2pgp -S --load secret.pgp --armor document.txt avatar.jpg
     $ gpg --verify document.txt.asc
     $ gpg --verify avatar.jpg.asc
 
@@ -155,14 +151,14 @@ Or use the `--trusted-key` option in `gpg.conf`.
 
 It's even possible to use passphrase2pgp directly to sign your Git tags
 and commits. First create a script with these contents, options adjusted
-to taste (add `-r`, `-t`, `-x`, etc.):
+to taste (add `--repeat`, `--time`, `--paranoid`, etc.):
 
 ```sh
 #!/bin/sh -e
 if [ "$2" != -bsau ]; then
     exec gpg "$@"  # fallback GnuPG when not signing
 fi
-passphrase2pgp -S -a -u "$3"
+passphrase2pgp --sign --armor --uid "$3"
 printf '\n[GNUPG:] SIG_CREATED ' >&2
 ```
 

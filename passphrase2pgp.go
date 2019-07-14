@@ -6,13 +6,14 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/skeeto/optparse-go"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -96,11 +97,8 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 type options struct {
-	mode   int
-	sign   bool // mode
-	keygen bool // mode
-
-	args []string
+	mode        int
+	args        []string
 
 	armor       bool
 	created     int64
@@ -108,7 +106,6 @@ type options struct {
 	help        bool
 	input       string
 	load        string
-	now         bool
 	paranoid    bool
 	public      bool
 	repeat      int
@@ -116,67 +113,134 @@ type options struct {
 	uid         string
 }
 
+func usage(w io.Writer) {
+	p := "passphrase2pgp"
+	i := "  "
+	f := func(s ...interface{}) {
+		fmt.Fprintln(w, s...)
+	}
+	f("Usage:")
+	f(i, p, "-K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]")
+	f(i, p, "-S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]")
+	f("Modes:")
+	f(i, "-S, --sign    create a detached signature")
+	f(i, "-K, --keygen  generate and output a key (default mode)")
+	f("Options:")
+	f(i, "-a, --armor            encode output in ASCII armor")
+	f(i, "-f, --fingerprint      also print fingerprint to standard error")
+	f(i, "-h, --help             print this help message")
+	f(i, "-i, --input FILE       read passphrase from file")
+	f(i, "-l, --load FILE        load key from file instead of generating")
+	f(i, "-n, --now              use current time as creation date")
+	f(i, "-p, --public           only output the public key")
+	f(i, "-r, --repeat N         number of repeated passphrase prompts")
+	f(i, "-s, --subkey           also output an encryption subkey")
+	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
+	f(i, "-u, --uid USERID       user ID for the key")
+	f(i, "-x, --paranoid         increase key generation costs")
+}
+
 func parse() *options {
-	var o options
-
-	flag.BoolVar(&o.sign, "S", false, "output detached signature for input")
-	flag.BoolVar(&o.keygen, "K", true, "output a new key")
-
-	flag.BoolVar(&o.armor, "a", false, "use ASCII armor")
-	flag.Int64Var(&o.created, "t", 0, "creation date (unix epoch seconds)")
-	flag.BoolVar(&o.fingerprint, "f", false, "also show fingerprint")
-	flag.BoolVar(&o.help, "h", false, "print this help message")
-	flag.StringVar(&o.input, "i", "", "read passphrase from file")
-	flag.StringVar(&o.load, "l", "", "load key from file instead")
-	flag.BoolVar(&o.now, "n", false, "use current time as creation date")
-	flag.BoolVar(&o.paranoid, "x", false, "paranoid mode")
-	flag.BoolVar(&o.public, "p", false, "only output public key")
-	flag.IntVar(&o.repeat, "r", 1, "number of repeated passphrase prompts")
-	flag.BoolVar(&o.subkey, "s", false, "also output encryption subkey")
-	flag.StringVar(&o.uid, "u", "", "user ID for the key")
-
-	flag.Parse()
-	if o.sign {
-		o.mode = modeSign
-	} else {
-		o.mode = modeKeygen
+	opt := options{
+		mode:   modeKeygen,
+		repeat: 1,
 	}
 
-	if o.help {
-		flag.CommandLine.SetOutput(os.Stdout)
-		flag.Usage()
-		os.Exit(0)
+	options := []optparse.Option{
+		{"sign", 'S', optparse.KindNone},
+		{"keygen", 'K', optparse.KindNone},
+
+		{"armor", 'a', optparse.KindNone},
+		{"fingerprint", 'f', optparse.KindNone},
+		{"help", 'h', optparse.KindNone},
+		{"input", 'i', optparse.KindRequired},
+		{"load", 'l', optparse.KindRequired},
+		{"now", 'n', optparse.KindNone},
+		{"public", 'p', optparse.KindNone},
+		{"repeat", 'r', optparse.KindRequired},
+		{"subkey", 's', optparse.KindNone},
+		{"time", 't', optparse.KindRequired},
+		{"uid", 'u', optparse.KindRequired},
+		{"paranoid", 'x', optparse.KindNone},
 	}
 
-	if o.uid == "" && o.load == "" {
+	var parser optparse.Parser
+	for {
+		result, err := parser.Next(options, os.Args)
+		if err != nil {
+			if err != optparse.Done {
+				usage(os.Stderr)
+				fatal("%s", err)
+			}
+			break
+		}
+		switch result.Long {
+		case "sign":
+			opt.mode = modeSign
+		case "keygen":
+			opt.mode = modeKeygen
+
+		case "armor":
+			opt.armor = true
+		case "fingerprint":
+			opt.fingerprint = true
+		case "help":
+			usage(os.Stdout)
+			os.Exit(0)
+		case "passphrase":
+			opt.input = result.Optarg
+		case "load":
+			opt.load = result.Optarg
+		case "now":
+			opt.created = time.Now().Unix()
+		case "public":
+			opt.public = true
+		case "repeat":
+			repeat, err := strconv.Atoi(result.Optarg)
+			if err != nil {
+				fatal("--repeat (-r): %s", err)
+			}
+			opt.repeat = repeat
+		case "subkey":
+			opt.subkey = true
+		case "time":
+			time, err := strconv.ParseUint(result.Optarg, 10, 32)
+			if err != nil {
+				fatal("--time (-t): %s", err)
+			}
+			opt.created = int64(time)
+		case "uid":
+			opt.uid = result.Optarg
+		case "paranoid":
+			opt.paranoid = true
+		}
+	}
+
+	if opt.uid == "" && opt.load == "" {
 		// Using os.Getenv instead of os.LookupEnv because empty is just
 		// as good as not set. It means a user can do something like:
 		// $ EMAIL= passphrase2pgp ...
 		if email := os.Getenv("EMAIL"); email != "" {
 			if realname := os.Getenv("REALNAME"); realname != "" {
-				o.uid = fmt.Sprintf("%s <%s>", realname, email)
+				opt.uid = fmt.Sprintf("%s <%s>", realname, email)
 			}
 		}
-		if o.uid == "" {
+		if opt.uid == "" {
 			fatal("must have either -u or -l option")
 		}
 	}
 
-	if o.now {
-		o.created = time.Now().Unix()
-	}
-
-	o.args = flag.Args()
-	switch o.mode {
+	opt.args = parser.Args(os.Args)
+	switch opt.mode {
 	case modeKeygen:
-		if len(o.args) > 0 {
+		if len(opt.args) > 0 {
 			fatal("too many arguments")
 		}
 	case modeSign:
 		// processed elsewhere
 	}
 
-	return &o
+	return &opt
 }
 
 func main() {
