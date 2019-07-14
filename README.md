@@ -24,9 +24,14 @@ Requires Go 1.9 or later.
 
 ## Usage
 
-Just pipe the output straight into GnuPG:
+Quick start: Provide an user ID (`-u`) and pipe the output into GnuPG.
 
     $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
+
+Usage summary:
+
+    passphrase2pgp -K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]
+    passphrase2pgp -S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]
 
 **Either `-u` or `-l` is required.**
 
@@ -38,8 +43,18 @@ Just pipe the output straight into GnuPG:
 * The `-l` option loads a previously generated key for use in other
   operations (signatures, print an ASCII-armored public key, etc.).
 
-There are two modes of operation: key generation (`-K`, default) and
-detached signatures (`-S`). Use `-h` for a complete option listing:
+There are two modes of operation:
+
+* Key generation (`-K`, default): Writes a key to standard output. This
+  is a secret key by default, but `-p` restricts it to a public key.
+
+* Detached signatures (`-S`): Signs one or more input files. Unless `-l`
+  is used, also generates a key, but that key is not output. If no files
+  are given, signs standard input to standard output. Otherwise for each
+  argument `file` creates `file.sig` with a detached signature. If armor
+  is enabled (`-a`), the file is named `file.asc`.
+
+Use `-h` for a full option listing:
 
     Usage of passphrase2pgp:
       -K	output a new key (default true)
@@ -74,41 +89,60 @@ then choose another memorable date.
 The `-x` (paranoid) setting quadruples the KDF difficulty. This will
 result in a different key for the same passphrase.
 
+### Examples
+
+Generate a private key and send it to GnuPG:
+
+    $ passphrase2pgp -u "..." | gnupg --import
+
+Create an armored public key for publishing and sharing:
+
+    $ passphrase2pgp -u "..." -a -p > Real-Name.asc
+
+Generate a private key and save it to a file in OpenPGP format for later
+use below:
+
+    $ passphrase2pgp -u "..." > secret.pgp
+
+Created detached signatures (`-S`) for some files:
+
+    $ passphrase2pgp -S -l secret.pgp document.txt avatar.jpg
+
+This will create `document.txt.sig` and `avatar.jpg.sig`. Then using
+OpenPGP to verify them:
+
+    $ gpg --import Real-Name.asc
+    $ gpg --verify document.txt.sig
+    $ gpg --verify avatar.jpg.sig
+
+Or, in order to avoid entering the passphrase again and waiting on key
+generation, use the previously saved private key to sign some files
+without entering your passphrase:
+
+    $ passphrase2pgp -S -l secret.pgp document.txt avatar.jpg
+
+Same, but now with ASCII-armored signatures:
+
+    $ passphrase2pgp -S -l secret.pgp -a document.txt avatar.jpg
+    $ gpg --verify document.txt.asc
+    $ gpg --verify avatar.jpg.asc
+
+### Interacting with GnuPG
+
 Once your key is generated, you may want to secure it with a protection
-passphrase on your GnuPG keychain in order to protect it at rest:
+passphrase on your GnuPG keyring in order to protect it at rest:
 
     $ gpg --edit-key "Real Name"
     gpg> passwd
 
-Trust is stored external to the keys, so imported keys are always
-initially untrusted. You will likely want to mark your newly-imported
-primary key as trusted.
+Trust is stored external to keys, so imported keys are always initially
+untrusted. You will likely want to mark your newly-imported primary key
+as trusted.
 
     $ gpg --edit-key "Real Name"
     gpg> trust
 
-The "sign" mode (`-S`) creates detached signatures on standard output
-from standard input:
-
-    $ passphrase2pgp -S -u "Real Name <name@example.com>" <data >data.sig
-    passphrase:
-    passphrase (repeat):
-
-To perform multiple operations in a row without regenerating the key for
-each operation, use the load (`-l`) option to load a previously
-generated key:
-
-    $ passphrase2pgp -u "Real Name <name@example.com>" >secret.pgp
-    passphrase:
-    passphrase (repeat):
-    $ passphrase2pgp -l secret.pgp -a -p >Real-Name.asc
-    $ passphrase2pgp -S -l secret.pgp <data >data.sig
-
-Where `Real-Name.asc`, `data`, and `data.sig` are distributed to others.
-Consuming these in GnuPG:
-
-    $ gpg --import Real-Name.asc
-    $ gpg --verify data.sig
+Or use the `--trusted-key` option in `gpg.conf`.
 
 ## Philosophy
 

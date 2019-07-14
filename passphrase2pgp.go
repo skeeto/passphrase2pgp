@@ -18,8 +18,10 @@ import (
 )
 
 const (
-	kdfTime   = 8
-	kdfMemory = 1024 * 1024 // 1 GB
+	kdfTime    = 8
+	kdfMemory  = 1024 * 1024 // 1 GB
+	modeKeygen = iota
+	modeSign
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -92,8 +94,12 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 type options struct {
-	sign        bool // mode
-	keygen      bool // mode
+	mode   int
+	sign   bool // mode
+	keygen bool // mode
+
+	args []string
+
 	armor       bool
 	created     int64
 	fingerprint bool
@@ -128,6 +134,11 @@ func parse() *options {
 	flag.StringVar(&o.uid, "u", "", "user ID for the key")
 
 	flag.Parse()
+	if o.sign {
+		o.mode = modeSign
+	} else {
+		o.mode = modeKeygen
+	}
 
 	if o.help {
 		flag.CommandLine.SetOutput(os.Stdout)
@@ -148,9 +159,21 @@ func parse() *options {
 			fatal("must have either -u or -l option")
 		}
 	}
+
 	if o.now {
 		o.created = time.Now().Unix()
 	}
+
+	o.args = flag.Args()
+	switch o.mode {
+	case modeKeygen:
+		if len(o.args) > 0 {
+			fatal("too many arguments")
+		}
+	case modeSign:
+		// processed elsewhere
+	}
+
 	return &o
 }
 
@@ -209,17 +232,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%X\n", key.KeyID())
 	}
 
-	// Buffer that will be output
-	var output []byte
-
-	if options.sign {
-		var err error
-		output, err = key.Sign(os.Stdin)
-		if err != nil {
-			fatal("%s", err)
-		}
-
-	} else {
+	switch options.mode {
+	case modeKeygen:
 		var buf bytes.Buffer
 		if options.public {
 			buf.Write(key.PubPacket())
@@ -238,14 +252,71 @@ func main() {
 				buf.Write(key.Bind(&subkey, options.created))
 			}
 		}
-		output = buf.Bytes()
-	}
+		output := buf.Bytes()
+		if options.armor {
+			output = Armor(output)
+		}
+		if _, err := os.Stdout.Write(output); err != nil {
+			fatal("%s", err)
+		}
 
-	if options.armor {
-		output = Armor(output)
-	}
+	case modeSign:
+		if len(options.args) == 0 {
+			// stdin to stdout
+			output, err := key.Sign(os.Stdin)
+			if err != nil {
+				fatal("%s", err)
+			}
+			if options.armor {
+				output = Armor(output)
+			}
+			_, err = os.Stdout.Write(output)
+			if err != nil {
+				fatal("%s", err)
+			}
 
-	if _, err := os.Stdout.Write(output); err != nil {
-		fatal("%s", err)
+		} else {
+			// file by file
+			var ext string
+			if options.armor {
+				ext = ".asc"
+			} else {
+				ext = ".sig"
+			}
+
+			for _, infile := range options.args {
+				// Open input file first
+				in, err := os.Open(infile)
+				if err != nil {
+					fatal("%s: %s", err, infile)
+				}
+
+				// Create output file second (before reading input)
+				outfile := infile + ext
+				out, err := os.Create(outfile)
+				if err != nil {
+					fatal("%s: %s", err, outfile)
+				}
+
+				// Process input, cleaning up on error
+				output, err := key.Sign(in)
+				if err != nil {
+					out.Close()
+					os.Remove(outfile)
+					fatal("%s: %s", err, infile)
+				}
+				if options.armor {
+					output = Armor(output)
+				}
+
+				// Write output, cleaning up on error
+				_, err = out.Write(output)
+				out.Close()
+				if err != nil {
+					os.Remove(outfile)
+					fatal("%s: %s", err, outfile)
+				}
+			}
+		}
 	}
 }
