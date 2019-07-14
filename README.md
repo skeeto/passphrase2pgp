@@ -99,6 +99,13 @@ Create an armored public key for publishing and sharing:
 
     $ passphrase2pgp -u "..." -a -p > Real-Name.asc
 
+Determine `-u` from the environment so that you don't need to type it
+out every time you use passphrase2pgp:
+
+    $ export REALNAME="Real Name"
+    $ export EMAIL="name@example.com"
+    $ passphrase2pgp -a -p > Real-Name.asc
+
 Generate a private key and save it to a file in OpenPGP format for later
 use below:
 
@@ -108,8 +115,8 @@ Created detached signatures (`-S`) for some files:
 
     $ passphrase2pgp -S -l secret.pgp document.txt avatar.jpg
 
-This will create `document.txt.sig` and `avatar.jpg.sig`. Then using
-OpenPGP to verify them:
+This will create `document.txt.sig` and `avatar.jpg.sig`. The other end
+would use GnuPG to verify the signatures like so:
 
     $ gpg --import Real-Name.asc
     $ gpg --verify document.txt.sig
