@@ -36,29 +36,31 @@ func fatal(format string, args ...interface{}) {
 // Read, confirm, and return a passphrase from the user.
 func readPassphrase(repeat int) ([]byte, error) {
 	fd := int(syscall.Stdin)
+	var out io.Writer = os.Stderr
 	if !terminal.IsTerminal(fd) {
-		tty, err := os.Open("/dev/tty")
+		tty, err := os.Create("/dev/tty") // O_RDWR
 		if err != nil {
 			fatal("failed to open /dev/tty")
 		}
 		defer tty.Close()
 		fd = int(tty.Fd())
+		out = tty
 	}
 
 	tail := []byte("\n")
-	os.Stderr.Write([]byte("passphrase: "))
+	out.Write([]byte("passphrase: "))
 	passphrase, err := terminal.ReadPassword(fd)
 	if err != nil {
 		return nil, err
 	}
-	os.Stderr.Write(tail)
+	out.Write(tail)
 	for i := 0; i < repeat; i++ {
-		os.Stderr.Write([]byte("passphrase (repeat): "))
+		out.Write([]byte("passphrase (repeat): "))
 		again, err := terminal.ReadPassword(fd)
 		if err != nil {
 			return nil, err
 		}
-		os.Stderr.Write(tail)
+		out.Write(tail)
 		if !bytes.Equal(again, passphrase) {
 			return nil, errors.New("passphrases do not match")
 		}
