@@ -187,7 +187,7 @@ func parse() *options {
 		case "help":
 			usage(os.Stdout)
 			os.Exit(0)
-		case "passphrase":
+		case "input":
 			opt.input = result.Optarg
 		case "load":
 			opt.load = result.Optarg
