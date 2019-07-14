@@ -35,7 +35,7 @@ func Armor(buf []byte) []byte {
 	var asc bytes.Buffer
 	asc.WriteString(beg)
 	wrap := &wrapper{&asc, 64, 0}
-	b64 := base64.NewEncoder(base64.RawStdEncoding, wrap)
+	b64 := base64.NewEncoder(base64.RawStdEncoding.WithPadding('='), wrap)
 	b64.Write(buf)
 	b64.Close()
 	asc.WriteString("\n=")
