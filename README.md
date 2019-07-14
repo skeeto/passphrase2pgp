@@ -24,7 +24,7 @@ Requires Go 1.9 or later.
 
 ## Usage
 
-Quick start: Provide an user ID (`-u`) and pipe the output into GnuPG.
+Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
 
     $ passphrase2pgp -u "Real Name <name@example.com>" | gpg --import
 
@@ -150,6 +150,45 @@ as trusted.
     gpg> trust
 
 Or use the `--trusted-key` option in `gpg.conf`.
+
+#### Signing Git tags and commits
+
+It's even possible to use passphrase2pgp directly to sign your Git tags
+and commits. First create a script with these contents, options adjusted
+to taste (add `-r`, `-t`, `-x`, etc.):
+
+```sh
+#!/bin/sh -e
+if [ "$2" != -bsau ]; then
+    exec gpg "$@"  # fallback GnuPG when not signing
+fi
+passphrase2pgp -S -a -u "$3"
+printf '\n[GNUPG:] SIG_CREATED ' >&2
+```
+
+This does *just* enough to convince Git that passphrase2pgp is actually
+GnuPG. Then tell Git to use it in place of GnuPG:
+
+    $ git config gpg.program path/to/script
+
+Example session of signing a tag with passphrase2pgp:
+
+    $ git tag -s tagname -m 'Tag message'
+    passphrase: 
+    passphrase (repeat): 
+
+Tag verification (via fallback to GnuPG):
+
+    $ passphrase2pgp -u "..." -p | gpg --import
+    passphrase: 
+    passphrase (repeat): 
+    $ git verify-tag tagname
+    gpg: Good signature from ...
+
+Unfortunately this configuration is fragile, but there's no practical
+way to avoid it. The Git documentation says it depends on the GnuPG
+interface without being specific, so the only robust solution is to
+re-implement the entire GnuPG interface.
 
 ## Philosophy
 
