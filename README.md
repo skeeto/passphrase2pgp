@@ -8,8 +8,8 @@ the original keys.
 
 The keys are derived from the passphrase and User ID (as salt) using
 [Argon2id][argon2] (memory=1GB and time=8) and [RFC 8032][rfc8032]. It's
-aggressive enough to protect passphrases short enough to be memorable by
-humans from offline brute force attacks. Always use [a strong
+aggressive enough to protect from offline brute force attacks
+passphrases short enough to be memorable by humans. Always use [a strong
 passphrase][dw].
 
 Requires Go 1.9 or later.
