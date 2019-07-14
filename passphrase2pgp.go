@@ -216,15 +216,16 @@ func main() {
 
 	} else {
 		// Load passphrase from the first line of a file
-		f, err := os.Open(options.load)
+		in, err := os.Open(options.load)
 		if err != nil {
 			fatal("%s", err)
 		}
-		defer f.Close()
-		if err := key.Load(f); err != nil {
+		defer in.Close()
+		bufin := bufio.NewReader(in)
+		if err := key.Load(bufin); err != nil {
 			fatal("%s", err)
 		}
-		if err := userid.Load(f); err != nil {
+		if err := userid.Load(bufin); err != nil {
 			fatal("%s", err)
 		}
 		options.created = key.Created()
