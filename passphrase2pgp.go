@@ -114,10 +114,11 @@ type options struct {
 }
 
 func usage(w io.Writer) {
+	bw := bufio.NewWriter(w)
 	p := "passphrase2pgp"
 	i := "  "
 	f := func(s ...interface{}) {
-		fmt.Fprintln(w, s...)
+		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
 	f(i, p, "-K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]")
@@ -138,6 +139,7 @@ func usage(w io.Writer) {
 	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
 	f(i, "-u, --uid USERID       user ID for the key")
 	f(i, "-x, --paranoid         increase key generation costs")
+	bw.Flush()
 }
 
 func parse() *options {
