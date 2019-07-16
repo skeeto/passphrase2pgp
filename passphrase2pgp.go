@@ -97,8 +97,8 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 type options struct {
-	mode        int
-	args        []string
+	mode int
+	args []string
 
 	armor       bool
 	created     int64
@@ -166,16 +166,12 @@ func parse() *options {
 		{"paranoid", 'x', optparse.KindNone},
 	}
 
-	var parser optparse.Parser
-	for {
-		result, err := parser.Next(options, os.Args)
-		if err != nil {
-			if err != optparse.Done {
-				usage(os.Stderr)
-				fatal("%s", err)
-			}
-			break
-		}
+	results, rest, err := optparse.Parse(options, os.Args)
+	if err != nil {
+		usage(os.Stderr)
+		fatal("%s", err)
+	}
+	for _, result := range results {
 		switch result.Long {
 		case "sign":
 			opt.mode = modeSign
@@ -232,7 +228,7 @@ func parse() *options {
 		}
 	}
 
-	opt.args = parser.Args(os.Args)
+	opt.args = rest
 	switch opt.mode {
 	case modeKeygen:
 		if len(opt.args) > 0 {
