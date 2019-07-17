@@ -157,8 +157,14 @@ Or use the `--trusted-key` option in `gpg.conf`.
 #### Signing Git tags and commits
 
 It's even possible to use passphrase2pgp directly to sign your Git tags
-and commits. First create a script with these contents, options adjusted
-to taste (add `--repeat`, `--time`, `--paranoid`, etc.):
+and commits. Just configure `gpg.program` to passphrase2pgp:
+
+    $ git config --global gpg.program passphrase2pgp
+
+However, with this setting you will be unable to verify commits and
+tags. To work around this problem, wrap passphrase2pgp in a script like
+the following, with options adjusted to taste (add `--repeat`, `--time`,
+`--paranoid`, etc.):
 
 ```sh
 #!/bin/sh -e
@@ -169,29 +175,24 @@ passphrase2pgp --sign --armor --uid "$3"
 printf '\n[GNUPG:] SIG_CREATED ' >&2
 ```
 
+Then set `gpg.program` to this script instead:
+
+    $ git config --global gpg.program path/to/script
+
 This does *just* enough to convince Git that passphrase2pgp is actually
-GnuPG. Then tell Git to use it in place of GnuPG:
-
-    $ git config gpg.program path/to/script
-
-Example session of signing a tag with passphrase2pgp:
+GnuPG. Example session of signing a tag with passphrase2pgp:
 
     $ git tag -s tagname -m 'Tag message'
     passphrase: 
     passphrase (repeat): 
 
-Tag verification (via fallback to GnuPG):
+Tag verification (via script to fallback to GnuPG):
 
     $ passphrase2pgp -u "..." -p | gpg --import
     passphrase: 
     passphrase (repeat): 
     $ git verify-tag tagname
     gpg: Good signature from ...
-
-Unfortunately this configuration is fragile, but there's no practical
-way to avoid it. The Git documentation says it depends on the GnuPG
-interface without being specific, so the only robust solution is to
-re-implement the entire GnuPG interface.
 
 ## Philosophy
 

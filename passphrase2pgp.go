@@ -172,7 +172,18 @@ func parse() *options {
 
 	var repeatSeen bool
 
-	results, rest, err := optparse.Parse(options, os.Args)
+	args := os.Args
+	if len(args) == 4 && args[1] == "--status-fd=2" && args[2] == "-bsau" {
+		// Pretend to be GnuPG in order to sign for Git. Unfortunately
+		// this is fragile, but there's no practical way to avoid it.
+		// The Git documentation says it depends on the GnuPG interface
+		// without being specific, so the only robust solution is to
+		// re-implement the entire GnuPG interface.
+		args = []string{args[0], "--sign", "--armor", "--uid", args[3]}
+		os.Stderr.WriteString("\n[GNUPG:] SIG_CREATED ")
+	}
+
+	results, rest, err := optparse.Parse(options, args)
 	if err != nil {
 		usage(os.Stderr)
 		fatal("%s", err)
