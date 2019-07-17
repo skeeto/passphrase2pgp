@@ -82,6 +82,13 @@ with `--time` (`-t`) or `--now` (`-n`), but, to regenerate the same key
 in the future, you will need to use `--time` to reenter the exact time.
 If 1970 is a problem, then choose another memorable date.
 
+The `--check` (`-c`) causes passphrase2pgp to abort if the final bytes
+of the Key ID do not match the hexadecimal argument. If this option is
+not provided, the `KEYID` environment variable is used if available. In
+either case, `--repeat` (`-r`) is set to zero unless it was explicitly
+provided. The additional passphrase check is unnecessary if they Key ID
+is being checked.
+
 The `--paranoid` (`-x`) setting quadruples the KDF difficulty. This will
 result in a different key for the same passphrase.
 

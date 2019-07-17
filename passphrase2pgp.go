@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -101,6 +102,7 @@ type options struct {
 	args []string
 
 	armor    bool
+	check    []byte
 	help     bool
 	input    string
 	load     string
@@ -128,6 +130,7 @@ func usage(w io.Writer) {
 	f(i, "-K, --keygen  generate and output a key (default mode)")
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
+	f(i, "-c, --check KEYID      require last Key ID bytes to match")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")
 	f(i, "-l, --load FILE        load key from file instead of generating")
@@ -153,6 +156,7 @@ func parse() *options {
 		{"keygen", 'K', optparse.KindNone},
 
 		{"armor", 'a', optparse.KindNone},
+		{"check", 'c', optparse.KindRequired},
 		{"help", 'h', optparse.KindNone},
 		{"input", 'i', optparse.KindRequired},
 		{"load", 'l', optparse.KindRequired},
@@ -165,6 +169,8 @@ func parse() *options {
 		{"verbose", 'v', optparse.KindNone},
 		{"paranoid", 'x', optparse.KindNone},
 	}
+
+	var repeatSeen bool
 
 	results, rest, err := optparse.Parse(options, os.Args)
 	if err != nil {
@@ -180,6 +186,12 @@ func parse() *options {
 
 		case "armor":
 			opt.armor = true
+		case "check":
+			check, err := hex.DecodeString(result.Optarg)
+			if err != nil {
+				fatal("%s: %q", err, result.Optarg)
+			}
+			opt.check = check
 		case "help":
 			usage(os.Stdout)
 			os.Exit(0)
@@ -197,6 +209,7 @@ func parse() *options {
 				fatal("--repeat (-r): %s", err)
 			}
 			opt.repeat = repeat
+			repeatSeen = true
 		case "subkey":
 			opt.subkey = true
 		case "time":
@@ -225,6 +238,20 @@ func parse() *options {
 		}
 		if opt.uid == "" {
 			fatal("must have either -u or -l option")
+		}
+	}
+
+	if opt.check == nil {
+		check, err := hex.DecodeString(os.Getenv("KEYID"))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "warning: $KEYID invalid, ignoring it\n")
+		} else {
+			opt.check = check
+		}
+	}
+	if len(opt.check) > 0 {
+		if !repeatSeen {
+			opt.repeat = 0
 		}
 	}
 
@@ -301,8 +328,14 @@ func main() {
 		}
 	}
 
+	keyid := key.KeyID()
 	if options.verbose {
-		fmt.Fprintf(os.Stderr, "Key ID: %X\n", key.KeyID())
+		fmt.Fprintf(os.Stderr, "Key ID: %X\n", keyid)
+	}
+	checked := keyid[len(keyid)-len(options.check):]
+	if !bytes.Equal(options.check, checked) {
+		fatal("Key ID does not match --check (-c):\n\t%X != %X",
+			checked, options.check)
 	}
 
 	switch options.mode {
