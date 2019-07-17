@@ -54,14 +54,13 @@ There are two modes of operation:
 Use `--help` (`-h`) for a full option listing:
 
     Usage:
-       passphrase2pgp -K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]
-       passphrase2pgp -S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]
+       passphrase2pgp -K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]
+       passphrase2pgp -S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]
     Modes:
        -S, --sign    create a detached signature
        -K, --keygen  generate and output a key (default mode)
     Options:
        -a, --armor            encode output in ASCII armor
-       -f, --fingerprint      also print fingerprint to standard error
        -h, --help             print this help message
        -i, --input FILE       read passphrase from file
        -l, --load FILE        load key from file instead of generating
@@ -71,6 +70,7 @@ Use `--help` (`-h`) for a full option listing:
        -s, --subkey           also output an encryption subkey
        -t, --time SECONDS     key creation date (unix epoch seconds)
        -u, --uid USERID       user ID for the key
+       -v, --verbose          print additional information
        -x, --paranoid         increase key generation costs
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key

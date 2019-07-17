@@ -100,17 +100,17 @@ type options struct {
 	mode int
 	args []string
 
-	armor       bool
-	created     int64
-	fingerprint bool
-	help        bool
-	input       string
-	load        string
-	paranoid    bool
-	public      bool
-	repeat      int
-	subkey      bool
-	uid         string
+	armor    bool
+	help     bool
+	input    string
+	load     string
+	public   bool
+	repeat   int
+	subkey   bool
+	created  int64
+	uid      string
+	verbose  bool
+	paranoid bool
 }
 
 func usage(w io.Writer) {
@@ -121,14 +121,13 @@ func usage(w io.Writer) {
 		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
-	f(i, p, "-K <-u id|-l key> [-afhnpsx] [-i ppfile] [-r n] [-t time]")
-	f(i, p, "-S <-u id|-l key> [-afh] [-i ppfile] [-r n] [files...]")
+	f(i, p, "-K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]")
+	f(i, p, "-S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]")
 	f("Modes:")
 	f(i, "-S, --sign    create a detached signature")
 	f(i, "-K, --keygen  generate and output a key (default mode)")
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
-	f(i, "-f, --fingerprint      also print fingerprint to standard error")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")
 	f(i, "-l, --load FILE        load key from file instead of generating")
@@ -138,6 +137,7 @@ func usage(w io.Writer) {
 	f(i, "-s, --subkey           also output an encryption subkey")
 	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
 	f(i, "-u, --uid USERID       user ID for the key")
+	f(i, "-v, --verbose          print additional information")
 	f(i, "-x, --paranoid         increase key generation costs")
 	bw.Flush()
 }
@@ -153,7 +153,6 @@ func parse() *options {
 		{"keygen", 'K', optparse.KindNone},
 
 		{"armor", 'a', optparse.KindNone},
-		{"fingerprint", 'f', optparse.KindNone},
 		{"help", 'h', optparse.KindNone},
 		{"input", 'i', optparse.KindRequired},
 		{"load", 'l', optparse.KindRequired},
@@ -163,6 +162,7 @@ func parse() *options {
 		{"subkey", 's', optparse.KindNone},
 		{"time", 't', optparse.KindRequired},
 		{"uid", 'u', optparse.KindRequired},
+		{"verbose", 'v', optparse.KindNone},
 		{"paranoid", 'x', optparse.KindNone},
 	}
 
@@ -180,8 +180,6 @@ func parse() *options {
 
 		case "armor":
 			opt.armor = true
-		case "fingerprint":
-			opt.fingerprint = true
 		case "help":
 			usage(os.Stdout)
 			os.Exit(0)
@@ -209,6 +207,8 @@ func parse() *options {
 			opt.created = int64(time)
 		case "uid":
 			opt.uid = result.Optarg
+		case "verbose":
+			opt.verbose = true
 		case "paranoid":
 			opt.paranoid = true
 		}
@@ -249,6 +249,10 @@ func main() {
 	options := parse()
 
 	if options.load == "" {
+		if options.verbose {
+			fmt.Fprintf(os.Stderr, "User ID: %s\n", options.uid)
+		}
+
 		// Read the passphrase from the terminal
 		var passphrase []byte
 		var err error
@@ -291,10 +295,14 @@ func main() {
 			fatal("%s", err)
 		}
 		options.created = key.Created()
+
+		if options.verbose {
+			fmt.Fprintf(os.Stderr, "User ID: %s\n", userid.ID)
+		}
 	}
 
-	if options.fingerprint {
-		fmt.Fprintf(os.Stderr, "%X\n", key.KeyID())
+	if options.verbose {
+		fmt.Fprintf(os.Stderr, "Key ID: %X\n", key.KeyID())
 	}
 
 	switch options.mode {
