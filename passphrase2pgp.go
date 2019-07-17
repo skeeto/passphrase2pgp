@@ -346,7 +346,7 @@ func main() {
 	}
 	checked := keyid[len(keyid)-len(options.check):]
 	if !bytes.Equal(options.check, checked) {
-		fatal("Key ID does not match --check (-c):\n\t%X != %X",
+		fatal("Key ID does not match --check (-c):\n  %X != %X",
 			checked, options.check)
 	}
 
