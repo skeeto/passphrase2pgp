@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	kdfTime    = 8
-	kdfMemory  = 1024 * 1024 // 1 GB
-	modeKeygen = iota
-	modeSign
+	kdfTime   = 8
+	kdfMemory = 1024 * 1024 // 1 GB
+
+	cmdKey = iota
+	cmdSign
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -98,7 +99,7 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 }
 
 type options struct {
-	mode int
+	cmd  int
 	args []string
 
 	armor    bool
@@ -125,9 +126,9 @@ func usage(w io.Writer) {
 	f("Usage:")
 	f(i, p, "-K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]")
 	f(i, p, "-S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]")
-	f("Modes:")
-	f(i, "-S, --sign    create a detached signature")
-	f(i, "-K, --keygen  generate and output a key (default mode)")
+	f("Commands:")
+	f(i, "-K, --key              output a key (default)")
+	f(i, "-S, --sign             output detached signatures")
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
@@ -147,7 +148,7 @@ func usage(w io.Writer) {
 
 func parse() *options {
 	opt := options{
-		mode:   modeKeygen,
+		cmd:    cmdKey,
 		repeat: 1,
 	}
 
@@ -191,9 +192,9 @@ func parse() *options {
 	for _, result := range results {
 		switch result.Long {
 		case "sign":
-			opt.mode = modeSign
+			opt.cmd = cmdSign
 		case "keygen":
-			opt.mode = modeKeygen
+			opt.cmd = cmdKey
 
 		case "armor":
 			opt.armor = true
@@ -267,12 +268,12 @@ func parse() *options {
 	}
 
 	opt.args = rest
-	switch opt.mode {
-	case modeKeygen:
+	switch opt.cmd {
+	case cmdKey:
 		if len(opt.args) > 0 {
 			fatal("too many arguments")
 		}
-	case modeSign:
+	case cmdSign:
 		// processed elsewhere
 	}
 
@@ -349,8 +350,8 @@ func main() {
 			checked, options.check)
 	}
 
-	switch options.mode {
-	case modeKeygen:
+	switch options.cmd {
+	case cmdKey:
 		var buf bytes.Buffer
 		if options.public {
 			buf.Write(key.PubPacket())
@@ -377,7 +378,7 @@ func main() {
 			fatal("%s", err)
 		}
 
-	case modeSign:
+	case cmdSign:
 		if len(options.args) == 0 {
 			// stdin to stdout
 			output, err := key.Sign(os.Stdin)

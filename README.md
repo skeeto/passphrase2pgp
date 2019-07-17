@@ -38,9 +38,9 @@ Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
 * The `--load` (`-l`) option loads a previously generated key for use in
   other operations (signature creation, ASCII-armored public key, etc.).
 
-There are two modes of operation:
+There are two commands:
 
-* Key generation (`--keygen`, `-K`) [default]: Writes a key to standard
+* Key generation (`--key`, `-K`) [default]: Writes a key to standard
   output. This is a secret key by default, but `--public` (`-p`)
   restricts it to a public key.
 
@@ -56,11 +56,12 @@ Use `--help` (`-h`) for a full option listing:
     Usage:
        passphrase2pgp -K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]
        passphrase2pgp -S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]
-    Modes:
-       -S, --sign    create a detached signature
-       -K, --keygen  generate and output a key (default mode)
+    Commands:
+       -K, --key              output a key (default)
+       -S, --sign             output detached signatures
     Options:
        -a, --armor            encode output in ASCII armor
+       -c, --check KEYID      require last Key ID bytes to match
        -h, --help             print this help message
        -i, --input FILE       read passphrase from file
        -l, --load FILE        load key from file instead of generating
