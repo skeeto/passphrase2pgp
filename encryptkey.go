@@ -110,6 +110,10 @@ func (k *EncryptKey) SignType() byte {
 	return 0x18
 }
 
+func (u *EncryptKey) SignFlags() byte {
+	return 0xc0
+}
+
 func (k *EncryptKey) SignData() []byte {
 	prefix := []byte{0x99, 0, 56}
 	packet := k.PubPacket()[2:]

@@ -37,6 +37,10 @@ func (u *UserID) SignType() byte {
 	return 0x13
 }
 
+func (u *UserID) SignFlags() byte {
+	return 0x03
+}
+
 func (u *UserID) SignData() []byte {
 	prefix := []byte{0xb4, 0, 0, 0}
 	packet := u.Packet()[1:]

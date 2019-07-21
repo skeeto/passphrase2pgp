@@ -153,14 +153,17 @@ type Bindable interface {
 	// SignType returns the signature type ID needed for this object.
 	SignType() byte
 
+	// SignFlags returns the key flags to set for this object.
+	SignFlags() byte
+
 	// SignData returns the data to be concatenated with other hash input.
 	SignData() []byte
 }
 
 // Bind a Bindable object to this key using an OpenPGP packet.
 func (k *SignKey) Bind(s Bindable, created int64) []byte {
-	const hashedLen = 16
-	const fixedLen = 28
+	const hashedLen = 19
+	const fixedLen = hashedLen + 12
 	be := binary.BigEndian
 
 	packet := make([]byte, fixedLen, fixedLen+66)
@@ -188,8 +191,15 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 	// about. Technically the Issuer subpacket is optional, but GnuPG
 	// will not import a key without it.
 
+	// Key Flags (length=2, type=27)
+	// This is necessary since some implementations (GitHub) treat the
+	// flag as if it was zero if not present.
+	packet[24] = 2
+	packet[25] = 27
+	packet[26] = s.SignFlags()
+
 	// Unhashed subpacket data (none)
-	be.PutUint16(packet[24:26], 0)
+	be.PutUint16(packet[27:29], 0)
 
 	// Compute digest to be signed
 	h := sha256.New()
@@ -210,7 +220,7 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 	sig := ed25519.Sign(k.Key, sigsum)
 
 	// hash preview
-	copy(packet[26:28], sigsum[:2])
+	copy(packet[29:31], sigsum[:2])
 
 	// signature
 	r := sig[:32]
