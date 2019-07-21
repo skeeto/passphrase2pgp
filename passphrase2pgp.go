@@ -313,7 +313,10 @@ func main() {
 
 		key.Seed(seed[:32])
 		key.SetCreated(options.created)
-		userid = UserID{ID: []byte(options.uid)}
+		userid = UserID{
+			ID: []byte(options.uid),
+			EnableMDC: options.subkey,
+		}
 		if options.subkey {
 			subkey.Seed(seed[32:])
 			subkey.SetCreated(options.created)

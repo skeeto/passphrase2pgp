@@ -8,6 +8,7 @@ import (
 // UserID represents a user identity. Implements Bindable.
 type UserID struct {
 	ID []byte
+	EnableMDC bool
 }
 
 // Packet returns an OpenPGP packet encoding this identity.
@@ -38,11 +39,22 @@ func (u *UserID) SignType() byte {
 }
 
 func (u *UserID) Subpackets() []Subpacket {
-	return []Subpacket{
+	subpackets := []Subpacket{
 		// Key Flags subpacket (sign and certify)
 		// This is necessary since some implementations (GitHub) treat
 		// all flags as if they were zero if not present.
 		{Type: 27, Data: []byte{0x03}},
+		// Features subpacket
+		// This bit tells senders to use a Message Detection Code (MDC)
+		// packet when encrypting messages. Data encrypted with OpenPGP
+		// is, by default, unauthenticated! MDC is a mostly-broken form
+		// of authentication that will make GnuPG complain a bit less.
+		{Type: 30, Data: []byte{0x01}},
+	}
+	if u.EnableMDC {
+		return subpackets[:]
+	} else {
+		return subpackets[:1]
 	}
 }
 
