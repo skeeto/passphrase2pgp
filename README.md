@@ -138,6 +138,12 @@ Same, but now with ASCII-armored signatures:
     $ gpg --verify document.txt.asc
     $ gpg --verify avatar.jpg.asc
 
+Append your public key to gpgv's trusted keyring so that gpgv can verify
+your own signatures:
+
+    $ passphrase2pgp -p >> ~/.gnupg/trustedkeys.kbx
+    $ gpgv document.txt.sig document.txt
+
 ### Interacting with GnuPG
 
 Once your key is generated, you may want to secure it with a protection
