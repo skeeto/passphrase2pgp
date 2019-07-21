@@ -110,8 +110,11 @@ func (k *EncryptKey) SignType() byte {
 	return 0x18
 }
 
-func (u *EncryptKey) SignFlags() byte {
-	return 0x0c
+func (u *EncryptKey) Subpackets() []Subpacket {
+	return []Subpacket{
+		// Key Flags subpacket (encrypt)
+		{Type: 27, Data: []byte{0x0c}},
+	}
 }
 
 func (k *EncryptKey) SignData() []byte {

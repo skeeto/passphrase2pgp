@@ -37,8 +37,13 @@ func (u *UserID) SignType() byte {
 	return 0x13
 }
 
-func (u *UserID) SignFlags() byte {
-	return 0x03
+func (u *UserID) Subpackets() []Subpacket {
+	return []Subpacket{
+		// Key Flags subpacket (sign and certify)
+		// This is necessary since some implementations (GitHub) treat
+		// all flags as if they were zero if not present.
+		{Type: 27, Data: []byte{0x03}},
+	}
 }
 
 func (u *UserID) SignData() []byte {

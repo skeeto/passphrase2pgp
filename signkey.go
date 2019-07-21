@@ -148,13 +148,18 @@ func (k *SignKey) KeyID() []byte {
 	return h.Sum(nil)
 }
 
+type Subpacket struct {
+	Type byte
+	Data []byte
+}
+
 // Bindable represents something that can be signed by a sign key.
 type Bindable interface {
 	// SignType returns the signature type ID needed for this object.
 	SignType() byte
 
-	// SignFlags returns the key flags to set for this object.
-	SignFlags() byte
+	// SignPackets returns the hashed subpackets for this key.
+	Subpackets() []Subpacket
 
 	// SignData returns the data to be concatenated with other hash input.
 	SignData() []byte
@@ -162,19 +167,15 @@ type Bindable interface {
 
 // Bind a Bindable object to this key using an OpenPGP packet.
 func (k *SignKey) Bind(s Bindable, created int64) []byte {
-	const hashedLen = 19
-	const fixedLen = hashedLen + 12
+	const fixedLen = 24
 	be := binary.BigEndian
 
-	packet := make([]byte, fixedLen, fixedLen+66)
+	packet := make([]byte, fixedLen, 257)
 	packet[0] = 0xc0 | 2     // packet header, new format, Signature Packet (2)
 	packet[2] = 0x04         // packet version, new (4)
 	packet[3] = s.SignType() // signature type
 	packet[4] = 22           // public-key algorithm, EdDSA
 	packet[5] = 8            // hash algorithm, SHA-256
-
-	// hashed subpacket data length
-	be.PutUint16(packet[6:8], hashedLen)
 
 	// Signature Creation Time subpacket (length=5, type=2)
 	packet[8] = 5
@@ -191,15 +192,19 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 	// about. Technically the Issuer subpacket is optional, but GnuPG
 	// will not import a key without it.
 
-	// Key Flags (length=2, type=27)
-	// This is necessary since some implementations (GitHub) treat the
-	// flag as if it was zero if not present.
-	packet[24] = 2
-	packet[25] = 27
-	packet[26] = s.SignFlags()
+	for _, subpacket := range s.Subpackets() {
+		packet = append(packet, byte(len(subpacket.Data)+1))
+		packet = append(packet, subpacket.Type)
+		packet = append(packet, subpacket.Data...)
+	}
+
+	// Hashed subpacket data length
+	hashedLen := uint16(len(packet) - 8)
+	be.PutUint16(packet[6:8], hashedLen)
 
 	// Unhashed subpacket data (none)
-	be.PutUint16(packet[27:29], 0)
+	packet = packet[:len(packet)+2]
+	be.PutUint16(packet[len(packet)-2:], 0)
 
 	// Compute digest to be signed
 	h := sha256.New()
@@ -212,15 +217,15 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 	h.Write(s.SignData())
 
 	// Write hash trailers
-	h.Write(packet[2 : hashedLen+8])                 // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, hashedLen + 6}) // final trailer
+	h.Write(packet[2 : hashedLen+8])                       // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, byte(hashedLen + 6)}) // final trailer
 
 	// Compute hash and sign
 	sigsum := h.Sum(nil)
 	sig := ed25519.Sign(k.Key, sigsum)
 
 	// hash preview
-	copy(packet[29:31], sigsum[:2])
+	packet = append(packet, sigsum[:2]...)
 
 	// signature
 	r := sig[:32]
