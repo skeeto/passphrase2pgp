@@ -111,7 +111,7 @@ func (k *EncryptKey) SignType() byte {
 }
 
 func (u *EncryptKey) SignFlags() byte {
-	return 0xc0
+	return 0x0c
 }
 
 func (k *EncryptKey) SignData() []byte {
