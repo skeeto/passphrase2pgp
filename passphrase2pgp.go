@@ -25,6 +25,7 @@ const (
 
 	cmdKey = iota
 	cmdSign
+	cmdCollide
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -155,6 +156,7 @@ func parse() *options {
 	options := []optparse.Option{
 		{"sign", 'S', optparse.KindNone},
 		{"keygen", 'K', optparse.KindNone},
+		{"collide", 'X', optparse.KindNone},
 
 		{"armor", 'a', optparse.KindNone},
 		{"check", 'c', optparse.KindRequired},
@@ -195,6 +197,8 @@ func parse() *options {
 			opt.cmd = cmdSign
 		case "keygen":
 			opt.cmd = cmdKey
+		case "collide":
+			opt.cmd = cmdCollide
 
 		case "armor":
 			opt.armor = true
@@ -275,6 +279,8 @@ func parse() *options {
 		}
 	case cmdSign:
 		// processed elsewhere
+	case cmdCollide:
+		collide(&opt)
 	}
 
 	return &opt
