@@ -103,7 +103,7 @@ func collide(options *options) {
 	for chain := range chains {
 		total += int64(chain.length)
 		if options.verbose {
-			fmt.Fprintf(os.Stderr, "chains %d, keys %d\n", len(seen), total)
+			fmt.Fprintf(os.Stderr, "chains %d, keys %d\n", len(seen)+1, total)
 		}
 
 		if seed, ok := seen[chain.truncID]; ok {
