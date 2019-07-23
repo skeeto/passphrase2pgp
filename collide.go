@@ -92,8 +92,7 @@ func collide(options *options) {
 		go func() {
 			for seed := range seeds {
 				truncID, length := computeChain(seed, options.created, nil)
-				chain := chain{seed, truncID, length}
-				chains <- chain
+				chains <- chain{seed, truncID, length}
 			}
 		}()
 	}
