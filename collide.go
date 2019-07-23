@@ -133,7 +133,11 @@ func collide(options *options) {
 				expand(kseed[:], seedA)
 				keyA.Seed(kseed[:])
 				keyA.SetCreated(options.created)
-				buf.Write(keyA.Packet())
+				if options.public {
+					buf.Write(keyA.PubPacket())
+				} else {
+					buf.Write(keyA.Packet())
+				}
 				buf.Write(userid.Packet())
 				buf.Write(keyA.Bind(&userid, options.created))
 				armor := Armor(buf.Bytes())
@@ -147,7 +151,11 @@ func collide(options *options) {
 				expand(kseed[:], seedB)
 				keyB.Seed(kseed[:])
 				keyB.SetCreated(options.created)
-				buf.Write(keyB.Packet())
+				if options.public {
+					buf.Write(keyB.PubPacket())
+				} else {
+					buf.Write(keyB.Packet())
+				}
 				buf.Write(userid.Packet())
 				buf.Write(keyB.Bind(&userid, options.created))
 				armor = Armor(buf.Bytes())
