@@ -76,6 +76,11 @@ func collide(options *options) {
 	// Feed unique seeds one at a time to the workers.
 	go func() {
 		seed := uint64(time.Now().UnixNano())
+		seed ^= seed >> 32
+		seed *= 0xd6e8feb86659fd93
+		seed ^= seed >> 32
+		seed *= 0xd6e8feb86659fd93
+		seed ^= seed >> 32
 		for {
 			seeds <- seed
 			seed++
