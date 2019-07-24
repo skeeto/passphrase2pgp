@@ -99,11 +99,15 @@ func collide(options *options) {
 
 	var total int64
 	seen := make(map[uint64]uint64)
+	mean := newMovingAverage(64)
+	start := time.Now()
 
 	for chain := range chains {
 		total += int64(chain.length)
 		if options.verbose {
-			fmt.Fprintf(os.Stderr, "chains %d, keys %d\n", len(seen)+1, total)
+			rate := mean.add(float64(total))
+			fmt.Fprintf(os.Stderr, "chains %d, keys %d, keys/sec %.0f\n",
+				len(seen)+1, total, rate)
 		}
 
 		if seed, ok := seen[chain.truncID]; ok {
@@ -123,6 +127,11 @@ func collide(options *options) {
 					continue
 				}
 				seedA := link.seed
+
+				if options.verbose {
+					duration := time.Now().Sub(start)
+					fmt.Fprintf(os.Stderr, "duration %s\n", duration)
+				}
 
 				var buf bytes.Buffer
 				userid := UserID{ID: []byte(options.uid)}
@@ -169,4 +178,35 @@ func collide(options *options) {
 			seen[chain.truncID] = chain.seed
 		}
 	}
+}
+
+type sample struct {
+	what float64
+	when time.Time
+}
+
+type movingAverage struct {
+	queue      []sample
+	head, tail int
+}
+
+func newMovingAverage(n int) *movingAverage {
+	return &movingAverage{queue: make([]sample, n)}
+}
+
+func (m *movingAverage) add(value float64) float64 {
+	head := &m.queue[m.head]
+	m.head = (m.head + 1) % len(m.queue)
+	if m.head == m.tail {
+		m.tail = (m.tail + 1) % len(m.queue)
+	}
+	tail := &m.queue[m.tail]
+	head.what = value
+	head.when = time.Now()
+	num := head.what - tail.what
+	den := head.when.Sub(tail.when).Seconds()
+	if den == 0.0 {
+		return 0.0
+	}
+	return num / den
 }
