@@ -2,9 +2,9 @@
 
 passphrase2pgp generates, in OpenPGP format, an EdDSA signing key and
 Curve25519 encryption subkey entirely from a passphrase, essentially
-allowing you to store a backup of your PGP keys in your brain. At any
-time you can re-run the tool and re-enter the passphrase to reproduce
-the original keys.
+allowing you to [store a backup of your PGP keys in your brain][blog].
+At any time you can re-run the tool and re-enter the passphrase to
+reproduce the original keys.
 
 The keys are derived from the passphrase and User ID (as salt) using
 [Argon2id][argon2] (memory=1GB and time=8) and [RFC 8032][rfc8032]. It's
@@ -17,6 +17,7 @@ Requires Go 1.9 or later.
 [argon2]: https://github.com/P-H-C/phc-winner-argon2
 [rfc8032]: https://tools.ietf.org/html/rfc8032
 [dw]: https://en.wikipedia.org/wiki/Diceware
+[blog]: https://nullprogram.com/blog/2019/07/10/
 
 ## Installation
 
@@ -228,12 +229,43 @@ OpenPGP has become the least important part.
 OpenPGP digital signatures still have *some* limited use, mostly due to
 momentum and lack of alternatives. The OpenPGP specification is
 over-engineered, loaded with useless legacy cruft, and ambiguous in many
-places. GnuPG is honestly not that great of an OpenPGP implementation,
-and I have low confidence in it. I stubbed my toe on a number of minor
-GnuPG bugs when hammering it with (usually invalid) output from
-passphrase2pgp while it was being developed.
+places. GnuPG is honestly not a great OpenPGP implementation, and I have
+low confidence in it. I stubbed my toe on a number of minor GnuPG bugs
+when hammering it with (usually invalid) output from passphrase2pgp
+while it was being developed.
 
 [mg]: https://blog.cryptographyengineering.com/2014/08/13/whats-matter-with-pgp/
+
+## Long Key ID Collision Finder
+
+As an easter egg there's a [hidden long key ID collider][long] hidden
+behind an undocumented (by `--help`) command, `--collide` (`-X`):
+
+    $ passphrase2pgp --collide --verbose --now --uid 'My Collision'
+
+It will use all your CPU cores (see `GOMAXPROCS`) and, on a modern
+computer, can take up to a day to find a collision. A collision is
+expected after around 4 billion keys (try `--verbose`), but could happen
+sooner or later.
+
+Additional computers can work together to search for a collision. To
+enable, pass additional arguments just for `--collide` (`-X`). One
+instance is a server that distributes tasks, but does none of its own
+work. Client instances join and compute hash chains on behalf of the
+server. Clients are free to come and go at any time.
+
+Start a server with `--server` (`-S`) listening on port 1234:
+
+    $ passphrase2pgp -Xvnu 'Distributed Collision' -- -S :1234
+
+Start one or more clients with `--client` (`-C`):
+
+    $ passphrase2pgp -Xu '' -- -C hostname:1234
+
+The `--` is necessary since arguments after `--` are only for the
+collider.
+
+[long]: https://nullprogram.com/blog/2019/07/22/
 
 ## References
 
