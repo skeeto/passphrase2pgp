@@ -1,12 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
+	"log"
+	"net"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/skeeto/optparse-go"
 )
 
 // mask selects the bits to be collided.
@@ -68,35 +74,22 @@ type chain struct {
 	length  int
 }
 
-// Find a long Key ID collision and print it to standard output.
-func collide(options *options) {
-	chains := make(chan chain)
-	seeds := make(chan uint64)
-
-	// Feed unique seeds one at a time to the workers.
-	go func() {
-		seed := uint64(time.Now().UnixNano())
-		seed ^= seed >> 32
-		seed *= 0xd6e8feb86659fd93
-		seed ^= seed >> 32
-		seed *= 0xd6e8feb86659fd93
-		seed ^= seed >> 32
-		for {
-			seeds <- seed
-			seed++
-		}
-	}()
-
-	// Spin off workers to create chains.
-	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
-		go func() {
-			for seed := range seeds {
-				truncID, length := computeChain(seed, options.created, nil)
-				chains <- chain{seed, truncID, length}
-			}
-		}()
+// Continuously fills the channel with new seeds.
+func seeder(seeds chan<- uint64) {
+	seed := uint64(time.Now().UnixNano())
+	seed ^= seed >> 32
+	seed *= 0xd6e8feb86659fd93
+	seed ^= seed >> 32
+	seed *= 0xd6e8feb86659fd93
+	seed ^= seed >> 32
+	for {
+		seeds <- seed
+		seed++
 	}
+}
 
+// Processes each chain from the channel looking for collisions.
+func consumer(chains <-chan chain, config *config) {
 	var total int64
 	seen := make(map[uint64]uint64)
 	mean := newMovingAverage(64)
@@ -104,7 +97,7 @@ func collide(options *options) {
 
 	for chain := range chains {
 		total += int64(chain.length)
-		if options.verbose {
+		if config.verbose {
 			rate := mean.add(float64(total))
 			fmt.Fprintf(os.Stderr, "chains %d, keys %d, keys/sec %.0f\n",
 				len(seen)+1, total, rate)
@@ -113,8 +106,8 @@ func collide(options *options) {
 		if seed, ok := seen[chain.truncID]; ok {
 			// Recreate chains, but record all the links this time.
 			var recordA, recordB []link
-			computeChain(seed, options.created, &recordA)
-			computeChain(chain.seed, options.created, &recordB)
+			computeChain(seed, config.created, &recordA)
+			computeChain(chain.seed, config.created, &recordB)
 
 			mapB := make(map[uint64]uint64)
 			for _, link := range recordB {
@@ -128,27 +121,27 @@ func collide(options *options) {
 				}
 				seedA := link.seed
 
-				if options.verbose {
+				if config.verbose {
 					duration := time.Now().Sub(start)
 					fmt.Fprintf(os.Stderr, "duration %s\n", duration)
 				}
 
 				var buf bytes.Buffer
-				userid := UserID{ID: []byte(options.uid)}
+				userid := UserID{ID: []byte(config.uid)}
 				var kseed [32]byte
 
 				// Recreate and self-sign first key
 				var keyA SignKey
 				expand(kseed[:], seedA)
 				keyA.Seed(kseed[:])
-				keyA.SetCreated(options.created)
-				if options.public {
+				keyA.SetCreated(config.created)
+				if config.public {
 					buf.Write(keyA.PubPacket())
 				} else {
 					buf.Write(keyA.Packet())
 				}
 				buf.Write(userid.Packet())
-				buf.Write(keyA.Bind(&userid, options.created))
+				buf.Write(keyA.Bind(&userid, config.created))
 				armor := Armor(buf.Bytes())
 				if _, err := os.Stdout.Write(armor); err != nil {
 					fatal("%s", err)
@@ -159,17 +152,22 @@ func collide(options *options) {
 				var keyB SignKey
 				expand(kseed[:], seedB)
 				keyB.Seed(kseed[:])
-				keyB.SetCreated(options.created)
-				if options.public {
+				keyB.SetCreated(config.created)
+				if config.public {
 					buf.Write(keyB.PubPacket())
 				} else {
 					buf.Write(keyB.Packet())
 				}
 				buf.Write(userid.Packet())
-				buf.Write(keyB.Bind(&userid, options.created))
+				buf.Write(keyB.Bind(&userid, config.created))
 				armor = Armor(buf.Bytes())
 				if _, err := os.Stdout.Write(armor); err != nil {
 					fatal("%s", err)
+				}
+
+				if config.verbose {
+					fmt.Fprintf(os.Stderr, "key ID %X\n", keyA.KeyID())
+					fmt.Fprintf(os.Stderr, "key ID %X\n", keyB.KeyID())
 				}
 
 				os.Exit(0)
@@ -177,6 +175,159 @@ func collide(options *options) {
 		} else {
 			seen[chain.truncID] = chain.seed
 		}
+	}
+}
+
+// Start a bunch of local chain builders.
+func startWorkers(seeds <-chan uint64, chains chan<- chain, created int64) {
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		go func() {
+			for seed := range seeds {
+				truncID, length := computeChain(seed, created, nil)
+				chains <- chain{seed, truncID, length}
+			}
+		}()
+	}
+}
+
+// Continuously fill a channel with seeds from a connection.
+func netSeeder(seeds chan<- uint64, conn net.Conn) {
+	var buf [8]byte
+	r := bufio.NewReader(conn)
+	for {
+		if _, err := r.Read(buf[:]); err != nil {
+			fatal("%s", err)
+		}
+		seeds <- binary.BigEndian.Uint64(buf[:])
+	}
+}
+
+// Take chains from the channel and send them over the network.
+func netConsumer(chains <-chan chain, conn net.Conn) {
+	var buf [20]byte
+	for chain := range chains {
+		binary.BigEndian.PutUint64(buf[0:], chain.seed)
+		binary.BigEndian.PutUint64(buf[8:], chain.truncID)
+		binary.BigEndian.PutUint32(buf[16:], uint32(chain.length))
+		if _, err := conn.Write(buf[:]); err != nil {
+			fatal("%s", err)
+		}
+	}
+}
+
+// Send seeds to remote workers and receive their chains.
+func netWorker(seeds <-chan uint64, chains chan<- chain, conn net.Conn) {
+	go func() {
+		var buf [8]byte
+		w := bufio.NewWriter(conn)
+		for seed := range seeds {
+			binary.BigEndian.PutUint64(buf[:], seed)
+			if _, err := w.Write(buf[:]); err != nil {
+				log.Println(err)
+				return
+			}
+		}
+	}()
+
+	var buf [20]byte
+	for {
+		if _, err := io.ReadFull(conn, buf[:]); err != nil {
+			log.Println(err)
+			return
+		}
+		seed := binary.BigEndian.Uint64(buf[0:])
+		truncID := binary.BigEndian.Uint64(buf[8:])
+		length := int(binary.BigEndian.Uint32(buf[16:]))
+		chains <- chain{seed, truncID, length}
+	}
+}
+
+// Listen for new workers and connect them to the channels.
+func workerListen(seeds <-chan uint64, chains chan<- chain,
+	addr string, created int64) {
+
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		fatal("%s", err)
+	}
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			log.Println(err)
+			continue
+		}
+		log.Println("client connected", conn.RemoteAddr())
+		var buf [4]byte
+		binary.BigEndian.PutUint32(buf[:], uint32(created))
+		if _, err := conn.Write(buf[:]); err != nil {
+			log.Println(err)
+			continue
+		}
+		go netWorker(seeds, chains, conn)
+	}
+}
+
+// Find a long Key ID collision and print it to standard output.
+func collide(config *config) {
+	chains := make(chan chain)
+	seeds := make(chan uint64)
+
+	const (
+		cmdDefault = iota
+		cmdClient
+		cmdServer
+	)
+	cmd := cmdDefault
+	var addr string
+
+	options := []optparse.Option{
+		{"client", 'C', optparse.KindRequired},
+		{"server", 'S', optparse.KindRequired},
+	}
+
+	args := append([]string{""}, config.args...)
+	results, _, err := optparse.Parse(options, args)
+	if err != nil {
+		fatal("-X: %s", err)
+	}
+	for _, result := range results {
+		switch result.Long {
+		case "client":
+			cmd = cmdClient
+			addr = result.Optarg
+		case "server":
+			cmd = cmdServer
+			addr = result.Optarg
+		}
+	}
+
+	switch cmd {
+	case cmdDefault:
+		// Feed unique seeds one at a time to the workers.
+		go seeder(seeds)
+		// Spin off workers to create chains.
+		startWorkers(seeds, chains, config.created)
+		consumer(chains, config)
+	case cmdClient:
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			fatal("%s", err)
+		}
+		// Get created date
+		var buf [4]byte
+		if _, err := io.ReadFull(conn, buf[:]); err != nil {
+			fatal("%s", err)
+		}
+		created := int64(binary.BigEndian.Uint32(buf[:]))
+		// Set up pipeline
+		go netSeeder(seeds, conn)
+		startWorkers(seeds, chains, created)
+		netConsumer(chains, conn)
+	case cmdServer:
+		// Set up pipeline
+		go seeder(seeds)
+		go workerListen(seeds, chains, addr, config.created)
+		consumer(chains, config)
 	}
 }
 

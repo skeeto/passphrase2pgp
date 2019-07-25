@@ -99,7 +99,7 @@ func kdf(passphrase, uid []byte, scale int) []byte {
 	return argon2.IDKey(passphrase, uid, time, memory, threads, 64)
 }
 
-type options struct {
+type config struct {
 	cmd  int
 	args []string
 
@@ -147,8 +147,8 @@ func usage(w io.Writer) {
 	bw.Flush()
 }
 
-func parse() *options {
-	opt := options{
+func parse() *config {
+	conf := config{
 		cmd:    cmdKey,
 		repeat: 1,
 	}
@@ -194,96 +194,96 @@ func parse() *options {
 	for _, result := range results {
 		switch result.Long {
 		case "sign":
-			opt.cmd = cmdSign
+			conf.cmd = cmdSign
 		case "keygen":
-			opt.cmd = cmdKey
+			conf.cmd = cmdKey
 		case "collide":
-			opt.cmd = cmdCollide
+			conf.cmd = cmdCollide
 
 		case "armor":
-			opt.armor = true
+			conf.armor = true
 		case "check":
 			check, err := hex.DecodeString(result.Optarg)
 			if err != nil {
 				fatal("%s: %q", err, result.Optarg)
 			}
-			opt.check = check
+			conf.check = check
 		case "help":
 			usage(os.Stdout)
 			os.Exit(0)
 		case "input":
-			opt.input = result.Optarg
+			conf.input = result.Optarg
 		case "load":
-			opt.load = result.Optarg
+			conf.load = result.Optarg
 		case "now":
-			opt.created = time.Now().Unix()
+			conf.created = time.Now().Unix()
 		case "public":
-			opt.public = true
+			conf.public = true
 		case "repeat":
 			repeat, err := strconv.Atoi(result.Optarg)
 			if err != nil {
 				fatal("--repeat (-r): %s", err)
 			}
-			opt.repeat = repeat
+			conf.repeat = repeat
 			repeatSeen = true
 		case "subkey":
-			opt.subkey = true
+			conf.subkey = true
 		case "time":
 			time, err := strconv.ParseUint(result.Optarg, 10, 32)
 			if err != nil {
 				fatal("--time (-t): %s", err)
 			}
-			opt.created = int64(time)
+			conf.created = int64(time)
 		case "uid":
-			opt.uid = result.Optarg
+			conf.uid = result.Optarg
 		case "verbose":
-			opt.verbose = true
+			conf.verbose = true
 		case "paranoid":
-			opt.paranoid = true
+			conf.paranoid = true
 		}
 	}
 
-	if opt.uid == "" && opt.load == "" {
+	if conf.uid == "" && conf.load == "" {
 		// Using os.Getenv instead of os.LookupEnv because empty is just
 		// as good as not set. It means a user can do something like:
 		// $ EMAIL= passphrase2pgp ...
 		if email := os.Getenv("EMAIL"); email != "" {
 			if realname := os.Getenv("REALNAME"); realname != "" {
-				opt.uid = fmt.Sprintf("%s <%s>", realname, email)
+				conf.uid = fmt.Sprintf("%s <%s>", realname, email)
 			}
 		}
-		if opt.uid == "" {
+		if conf.uid == "" {
 			fatal("must have either -u or -l option")
 		}
 	}
 
-	if opt.check == nil {
+	if conf.check == nil {
 		check, err := hex.DecodeString(os.Getenv("KEYID"))
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "warning: $KEYID invalid, ignoring it\n")
 		} else {
-			opt.check = check
+			conf.check = check
 		}
 	}
-	if len(opt.check) > 0 {
+	if len(conf.check) > 0 {
 		if !repeatSeen {
-			opt.repeat = 0
+			conf.repeat = 0
 		}
 	}
 
-	opt.args = rest
-	switch opt.cmd {
+	conf.args = rest
+	switch conf.cmd {
 	case cmdKey:
-		if len(opt.args) > 0 {
+		if len(conf.args) > 0 {
 			fatal("too many arguments")
 		}
 	case cmdSign:
 		// processed elsewhere
 	case cmdCollide:
-		collide(&opt)
+		collide(&conf)
 	}
 
-	return &opt
+	return &conf
 }
 
 func main() {
@@ -291,20 +291,20 @@ func main() {
 	var subkey EncryptKey
 	var userid UserID
 
-	options := parse()
+	config := parse()
 
-	if options.load == "" {
-		if options.verbose {
-			fmt.Fprintf(os.Stderr, "User ID: %s\n", options.uid)
+	if config.load == "" {
+		if config.verbose {
+			fmt.Fprintf(os.Stderr, "User ID: %s\n", config.uid)
 		}
 
 		// Read the passphrase from the terminal
 		var passphrase []byte
 		var err error
-		if options.input != "" {
-			passphrase, err = firstLine(options.input)
+		if config.input != "" {
+			passphrase, err = firstLine(config.input)
 		} else {
-			passphrase, err = readPassphrase(options.repeat)
+			passphrase, err = readPassphrase(config.repeat)
 		}
 		if err != nil {
 			fatal("%s", err)
@@ -312,25 +312,25 @@ func main() {
 
 		// Run KDF on passphrase
 		scale := 1
-		if options.paranoid {
+		if config.paranoid {
 			scale = 2 // actually 4x difficulty
 		}
-		seed := kdf(passphrase, []byte(options.uid), scale)
+		seed := kdf(passphrase, []byte(config.uid), scale)
 
 		key.Seed(seed[:32])
-		key.SetCreated(options.created)
+		key.SetCreated(config.created)
 		userid = UserID{
-			ID: []byte(options.uid),
-			EnableMDC: options.subkey,
+			ID: []byte(config.uid),
+			EnableMDC: config.subkey,
 		}
-		if options.subkey {
+		if config.subkey {
 			subkey.Seed(seed[32:])
-			subkey.SetCreated(options.created)
+			subkey.SetCreated(config.created)
 		}
 
 	} else {
 		// Load passphrase from the first line of a file
-		in, err := os.Open(options.load)
+		in, err := os.Open(config.load)
 		if err != nil {
 			fatal("%s", err)
 		}
@@ -342,45 +342,45 @@ func main() {
 		if err := userid.Load(bufin); err != nil {
 			fatal("%s", err)
 		}
-		options.created = key.Created()
+		config.created = key.Created()
 
-		if options.verbose {
+		if config.verbose {
 			fmt.Fprintf(os.Stderr, "User ID: %s\n", userid.ID)
 		}
 	}
 
 	keyid := key.KeyID()
-	if options.verbose {
+	if config.verbose {
 		fmt.Fprintf(os.Stderr, "Key ID: %X\n", keyid)
 	}
-	checked := keyid[len(keyid)-len(options.check):]
-	if !bytes.Equal(options.check, checked) {
+	checked := keyid[len(keyid)-len(config.check):]
+	if !bytes.Equal(config.check, checked) {
 		fatal("Key ID does not match --check (-c):\n  %X != %X",
-			checked, options.check)
+			checked, config.check)
 	}
 
-	switch options.cmd {
+	switch config.cmd {
 	case cmdKey:
 		var buf bytes.Buffer
-		if options.public {
+		if config.public {
 			buf.Write(key.PubPacket())
 			buf.Write(userid.Packet())
-			buf.Write(key.Bind(&userid, options.created))
-			if options.subkey {
+			buf.Write(key.Bind(&userid, config.created))
+			if config.subkey {
 				buf.Write(subkey.PubPacket())
-				buf.Write(key.Bind(&subkey, options.created))
+				buf.Write(key.Bind(&subkey, config.created))
 			}
 		} else {
 			buf.Write(key.Packet())
 			buf.Write(userid.Packet())
-			buf.Write(key.Bind(&userid, options.created))
-			if options.subkey {
+			buf.Write(key.Bind(&userid, config.created))
+			if config.subkey {
 				buf.Write(subkey.Packet())
-				buf.Write(key.Bind(&subkey, options.created))
+				buf.Write(key.Bind(&subkey, config.created))
 			}
 		}
 		output := buf.Bytes()
-		if options.armor {
+		if config.armor {
 			output = Armor(output)
 		}
 		if _, err := os.Stdout.Write(output); err != nil {
@@ -388,13 +388,13 @@ func main() {
 		}
 
 	case cmdSign:
-		if len(options.args) == 0 {
+		if len(config.args) == 0 {
 			// stdin to stdout
 			output, err := key.Sign(os.Stdin)
 			if err != nil {
 				fatal("%s", err)
 			}
-			if options.armor {
+			if config.armor {
 				output = Armor(output)
 			}
 			_, err = os.Stdout.Write(output)
@@ -405,13 +405,13 @@ func main() {
 		} else {
 			// file by file
 			var ext string
-			if options.armor {
+			if config.armor {
 				ext = ".asc"
 			} else {
 				ext = ".sig"
 			}
 
-			for _, infile := range options.args {
+			for _, infile := range config.args {
 				// Open input file first
 				in, err := os.Open(infile)
 				if err != nil {
@@ -432,7 +432,7 @@ func main() {
 					os.Remove(outfile)
 					fatal("%s: %s", err, infile)
 				}
-				if options.armor {
+				if config.armor {
 					output = Armor(output)
 				}
 
