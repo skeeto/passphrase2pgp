@@ -260,7 +260,7 @@ Start a server with `--server` (`-S`) listening on port 1234:
 
 Start one or more clients with `--client` (`-C`):
 
-    $ passphrase2pgp -Xu '' -- -C hostname:1234
+    $ passphrase2pgp -Xux -- -C hostname:1234
 
 The `--` is necessary since arguments after `--` are only for the
 collider.
