@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/skeeto/optparse-go"
+	"github.com/skeeto/passphrase2pgp/openpgp"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/ssh/terminal"
 )
@@ -287,9 +288,9 @@ func parse() *config {
 }
 
 func main() {
-	var key SignKey
-	var subkey EncryptKey
-	var userid UserID
+	var key openpgp.SignKey
+	var subkey openpgp.EncryptKey
+	var userid openpgp.UserID
 
 	config := parse()
 
@@ -319,7 +320,7 @@ func main() {
 
 		key.Seed(seed[:32])
 		key.SetCreated(config.created)
-		userid = UserID{
+		userid = openpgp.UserID{
 			ID:        []byte(config.uid),
 			EnableMDC: config.subkey,
 		}
@@ -381,7 +382,7 @@ func main() {
 		}
 		output := buf.Bytes()
 		if config.armor {
-			output = Armor(output)
+			output = openpgp.Armor(output)
 		}
 		if _, err := os.Stdout.Write(output); err != nil {
 			fatal("%s", err)
@@ -395,7 +396,7 @@ func main() {
 				fatal("%s", err)
 			}
 			if config.armor {
-				output = Armor(output)
+				output = openpgp.Armor(output)
 			}
 			_, err = os.Stdout.Write(output)
 			if err != nil {
@@ -433,7 +434,7 @@ func main() {
 					fatal("%s: %s", err, infile)
 				}
 				if config.armor {
-					output = Armor(output)
+					output = openpgp.Armor(output)
 				}
 
 				// Write output, cleaning up on error

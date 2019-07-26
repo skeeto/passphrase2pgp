@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/skeeto/optparse-go"
+	"github.com/skeeto/passphrase2pgp/openpgp"
 )
 
 // mask selects the bits to be collided.
@@ -49,7 +50,7 @@ type link struct {
 // itself is recorded into the link slice for inspection.
 func computeChain(seed uint64, created int64, record *[]link) (uint64, int) {
 	var kseed [32]byte
-	var key SignKey
+	var key openpgp.SignKey
 	key.SetCreated(created)
 	for count := 1; ; count++ {
 		expand(kseed[:], seed)
@@ -127,11 +128,11 @@ func consumer(chains <-chan chain, config *config) {
 				}
 
 				var buf bytes.Buffer
-				userid := UserID{ID: []byte(config.uid)}
+				userid := openpgp.UserID{ID: []byte(config.uid)}
 				var kseed [32]byte
 
 				// Recreate and self-sign first key
-				var keyA SignKey
+				var keyA openpgp.SignKey
 				expand(kseed[:], seedA)
 				keyA.Seed(kseed[:])
 				keyA.SetCreated(config.created)
@@ -142,14 +143,14 @@ func consumer(chains <-chan chain, config *config) {
 				}
 				buf.Write(userid.Packet())
 				buf.Write(keyA.Bind(&userid, config.created))
-				armor := Armor(buf.Bytes())
+				armor := openpgp.Armor(buf.Bytes())
 				if _, err := os.Stdout.Write(armor); err != nil {
 					fatal("%s", err)
 				}
 				buf.Truncate(0)
 
 				// Recreate and self-sign second key
-				var keyB SignKey
+				var keyB openpgp.SignKey
 				expand(kseed[:], seedB)
 				keyB.Seed(kseed[:])
 				keyB.SetCreated(config.created)
@@ -160,7 +161,7 @@ func consumer(chains <-chan chain, config *config) {
 				}
 				buf.Write(userid.Packet())
 				buf.Write(keyB.Bind(&userid, config.created))
-				armor = Armor(buf.Bytes())
+				armor = openpgp.Armor(buf.Bytes())
 				if _, err := os.Stdout.Write(armor); err != nil {
 					fatal("%s", err)
 				}
