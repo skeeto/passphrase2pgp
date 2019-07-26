@@ -7,7 +7,7 @@ import (
 
 // UserID represents a user identity. Implements Bindable.
 type UserID struct {
-	ID []byte
+	ID        []byte
 	EnableMDC bool
 }
 

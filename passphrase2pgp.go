@@ -320,7 +320,7 @@ func main() {
 		key.Seed(seed[:32])
 		key.SetCreated(config.created)
 		userid = UserID{
-			ID: []byte(config.uid),
+			ID:        []byte(config.uid),
 			EnableMDC: config.subkey,
 		}
 		if config.subkey {
