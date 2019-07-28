@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/skeeto/optparse-go"
 	"github.com/skeeto/passphrase2pgp/openpgp"
@@ -233,6 +234,12 @@ func parse() *config {
 			conf.created = int64(time)
 		case "uid":
 			conf.uid = result.Optarg
+			if len(conf.uid) > 255 {
+				fatal("user ID length must be <= 255 bytes")
+			}
+			if !utf8.ValidString(conf.uid) {
+				fatal("user ID must be valid UTF-8")
+			}
 		case "verbose":
 			conf.verbose = true
 		case "paranoid":
