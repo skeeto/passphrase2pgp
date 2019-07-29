@@ -174,6 +174,7 @@ func parse() *config {
 	}
 
 	var repeatSeen bool
+	var uidSeen bool
 
 	args := os.Args
 	if len(args) == 4 && args[1] == "--status-fd=2" && args[2] == "-bsau" {
@@ -240,6 +241,7 @@ func parse() *config {
 			if !utf8.ValidString(conf.uid) {
 				fatal("user ID must be valid UTF-8")
 			}
+			uidSeen = true
 		case "verbose":
 			conf.verbose = true
 		case "paranoid":
@@ -247,7 +249,7 @@ func parse() *config {
 		}
 	}
 
-	if conf.uid == "" && conf.load == "" {
+	if !uidSeen && conf.load == "" {
 		// Using os.Getenv instead of os.LookupEnv because empty is just
 		// as good as not set. It means a user can do something like:
 		// $ EMAIL= passphrase2pgp ...
@@ -257,7 +259,7 @@ func parse() *config {
 			}
 		}
 		if conf.uid == "" {
-			fatal("must have either -u or -l option")
+			fatal("--uid or --load required (or $REALNAME and $EMAIL)")
 		}
 	}
 
