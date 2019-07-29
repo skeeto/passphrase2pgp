@@ -270,6 +270,15 @@ func (k *SignKey) Clearsign(src io.Reader) io.ReadCloser {
 		for s.Scan() {
 			line := s.Bytes()
 
+			// Remove trailing whitespace
+			for i := len(line) - 1; i >= 0; i-- {
+				if line[i] == 0x20 || line[i] == 0x09 {
+					line = line[:i]
+				} else {
+					break
+				}
+			}
+
 			// Append to hash
 			if !first {
 				h.Write(crlf)
