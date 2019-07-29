@@ -56,7 +56,8 @@ There are two commands:
   named `file.asc`.
 
 * Cleartext signature (`--clearsign`, `-T`): Cleartext signs standard
-  input to standard output. The usual cleartext signature caveats apply.
+  input to standard output, or from a file to standard output. The usual
+  cleartext signature caveats apply.
 
 Use `--help` (`-h`) for a full option listing:
 

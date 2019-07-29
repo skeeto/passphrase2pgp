@@ -285,12 +285,16 @@ func parse() *config {
 
 	conf.args = rest
 	switch conf.cmd {
-	case cmdKey, cmdClearsign:
+	case cmdKey:
 		if len(conf.args) > 0 {
 			fatal("too many arguments")
 		}
 	case cmdSign:
 		// processed elsewhere
+	case cmdClearsign:
+		if len(conf.args) > 1 {
+			fatal("too many arguments")
+		}
 	}
 
 	return &conf
@@ -458,12 +462,29 @@ func main() {
 
 	case cmdClearsign:
 		out := bufio.NewWriter(os.Stdout)
-		in := key.Clearsign(os.Stdin)
+		var in io.Reader
+		var f *os.File
+		if len(config.args) == 1 {
+			var err error
+			f, err = os.Open(config.args[0])
+			if err != nil {
+				fatal("%s", err)
+			}
+			in = key.Clearsign(f)
+		} else {
+			in = key.Clearsign(os.Stdin)
+		}
+
+		// Pump input through filter
 		if _, err := io.Copy(out, in); err != nil {
 			fatal("%s", err)
 		}
 		if err := out.Flush(); err != nil {
 			fatal("%s", err)
+		}
+
+		if f != nil {
+			f.Close()
 		}
 	}
 }
