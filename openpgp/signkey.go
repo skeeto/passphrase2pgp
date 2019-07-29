@@ -1,11 +1,13 @@
 package openpgp
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
+	"hash"
 	"io"
 	"time"
 
@@ -238,8 +240,71 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 	return packet
 }
 
-// Sign some data with this key using an OpenPGP signature packet.
+// Sign binary data with this key using an OpenPGP signature packet.
 func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
+	const sigtype = 0x00 // binary document
+	// Compute digest to be signed
+	h := sha256.New()
+	if _, err := io.Copy(h, src); err != nil {
+		return nil, err
+	}
+	return k.sign(h, sigtype), nil
+}
+
+// Clearsign returns a new cleartext stream signer. Data from the
+// given reader will be cleartext-signed and wrtten into the returned
+// reader. The returned reader must either be read completely or closed.
+func (k *SignKey) Clearsign(src io.Reader) io.ReadCloser {
+	const sigtype = 0x01 // text document
+	r, w := io.Pipe()
+	go func() {
+		open := []byte("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n")
+		crlf := []byte("\r\n")
+		tmp := make([]byte, 128)
+		if _, err := w.Write(open); err != nil {
+			return
+		}
+		s := bufio.NewScanner(src)
+		h := sha256.New()
+		first := true
+		for s.Scan() {
+			line := s.Bytes()
+
+			// Append to hash
+			if !first {
+				h.Write(crlf)
+			}
+			first = false
+			h.Write(line)
+
+			// Pass through dash-encoded
+			if len(line) > 0 && line[0] == 0x2d {
+				tmp = tmp[:2]
+				tmp[0] = 0x2d
+				tmp[1] = 0x20
+			} else {
+				tmp = tmp[:0]
+			}
+			tmp = append(tmp, line...)
+			tmp = append(tmp, 0x0a)
+			if _, err := w.Write(tmp); err != nil {
+				return
+			}
+		}
+		if err := s.Err(); err != nil {
+			w.CloseWithError(err)
+		}
+		sig := Armor(k.sign(h, sigtype))
+		if _, err := w.Write(sig); err != nil {
+			return
+		}
+		w.Close()
+	}()
+	return r
+}
+
+// Generic signature framework for both binary and text signatures.
+func (k *SignKey) sign(h hash.Hash, sigtype byte) []byte {
 	const (
 		hashedLen = 39
 		fixedLen  = 51
@@ -249,7 +314,7 @@ func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
 	packet := make([]byte, fixedLen, fixedLen+66)
 	packet[0] = 0xc0 | 2 // packet header, new format, Signature Packet (2)
 	packet[2] = 0x04     // packet version, new (4)
-	packet[3] = 0x00     // signature type, binary document
+	packet[3] = sigtype  // signature type
 	packet[4] = 22       // public-key algorithm, EdDSA
 	packet[5] = 8        // hash algorithm, SHA-256
 	be.PutUint16(packet[6:8], hashedLen)
@@ -275,11 +340,7 @@ func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
 	// Unhashed subpacket data (none)
 	be.PutUint16(packet[47:49], 0)
 
-	// Compute digest to be signed
-	h := sha256.New()
-	if _, err := io.Copy(h, src); err != nil {
-		return nil, err
-	}
+	// Append trailers to the end of the digest input
 	h.Write(packet[2 : hashedLen+8])                 // trailer
 	h.Write([]byte{4, 0xff, 0, 0, 0, hashedLen + 6}) // final trailer
 	sigsum := h.Sum(nil)
@@ -296,5 +357,5 @@ func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
 
 	// Finalize
 	packet[1] = byte(len(packet)) - 2 // packet length
-	return packet, nil
+	return packet
 }

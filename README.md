@@ -55,28 +55,35 @@ There are two commands:
   detached signature. If armor is enabled (`--armor`, `-a`), the file is
   named `file.asc`.
 
+* Cleartext signature (`--clearsign`, `-T`): Cleartext signs standard
+  input to standard output. The usual cleartext signature caveats apply.
+
 Use `--help` (`-h`) for a full option listing:
 
-    Usage:
-       passphrase2pgp -K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]
-       passphrase2pgp -S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]
-    Commands:
-       -K, --key              output a key (default)
-       -S, --sign             output detached signatures
-    Options:
-       -a, --armor            encode output in ASCII armor
-       -c, --check KEYID      require last Key ID bytes to match
-       -h, --help             print this help message
-       -i, --input FILE       read passphrase from file
-       -l, --load FILE        load key from file instead of generating
-       -n, --now              use current time as creation date
-       -p, --public           only output the public key
-       -r, --repeat N         number of repeated passphrase prompts
-       -s, --subkey           also output an encryption subkey
-       -t, --time SECONDS     key creation date (unix epoch seconds)
-       -u, --uid USERID       user ID for the key
-       -v, --verbose          print additional information
-       -x, --paranoid         increase key generation costs
+```
+Usage:
+   passphrase2pgp -K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]
+   passphrase2pgp -S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]
+   passphrase2pgp -T <-u id|-l key> [-v] [-i ppfile] [-r n] <doc.txt >sig.txt
+Commands:
+   -K, --key              output a key (default)
+   -S, --sign             output detached signatures
+   -T, --clearsign        output a cleartext signature
+Options:
+   -a, --armor            encode output in ASCII armor
+   -c, --check KEYID      require last Key ID bytes to match
+   -h, --help             print this help message
+   -i, --input FILE       read passphrase from file
+   -l, --load FILE        load key from file instead of generating
+   -n, --now              use current time as creation date
+   -p, --public           only output the public key
+   -r, --repeat N         number of repeated passphrase prompts
+   -s, --subkey           also output an encryption subkey
+   -t, --time SECONDS     key creation date (unix epoch seconds)
+   -u, --uid USERID       user ID for the key
+   -v, --verbose          print additional information
+   -x, --paranoid         increase key generation costs
+```
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
 and its creation date.** Therefore using a different date with the same
@@ -119,9 +126,9 @@ use below:
 
     $ passphrase2pgp --uid "..." > secret.pgp
 
-Created detached signatures (`-S`) for some files:
+Create detached signatures (`-S`) for some files:
 
-    $ passphrase2pgp -S --load secret.pgp document.txt avatar.jpg
+    $ passphrase2pgp -S document.txt avatar.jpg
 
 This will create `document.txt.sig` and `avatar.jpg.sig`. The other end
 would use GnuPG to verify the signatures like so:
@@ -138,9 +145,13 @@ without entering your passphrase:
 
 Same, but now with ASCII-armored signatures:
 
-    $ passphrase2pgp -S --load secret.pgp --armor document.txt avatar.jpg
+    $ passphrase2pgp -S -lsecret.pgp --armor document.txt avatar.jpg
     $ gpg --verify document.txt.asc
     $ gpg --verify avatar.jpg.asc
+
+Create a cleartext-signed text document:
+
+    $ passphrase2pgp -T >signed-doc.txt <doc.txt
 
 Append your public key to gpgv's trusted keyring so that gpgv can verify
 your own signatures:

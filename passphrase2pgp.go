@@ -27,6 +27,7 @@ const (
 
 	cmdKey = iota
 	cmdSign
+	cmdClearsign
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -128,9 +129,11 @@ func usage(w io.Writer) {
 	f("Usage:")
 	f(i, p, "-K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]")
 	f(i, p, "-S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]")
+	f(i, p, "-T <-u id|-l key> [-v] [-i ppfile] [-r n] >sig.txt <doc.txt")
 	f("Commands:")
 	f(i, "-K, --key              output a key (default)")
 	f(i, "-S, --sign             output detached signatures")
+	f(i, "-T, --clearsign        output a cleartext signature")
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
@@ -157,6 +160,7 @@ func parse() *config {
 	options := []optparse.Option{
 		{"sign", 'S', optparse.KindNone},
 		{"keygen", 'K', optparse.KindNone},
+		{"clearsign", 'T', optparse.KindNone},
 
 		{"armor", 'a', optparse.KindNone},
 		{"check", 'c', optparse.KindRequired},
@@ -198,6 +202,8 @@ func parse() *config {
 			conf.cmd = cmdSign
 		case "keygen":
 			conf.cmd = cmdKey
+		case "clearsign":
+			conf.cmd = cmdClearsign
 
 		case "armor":
 			conf.armor = true
@@ -279,7 +285,7 @@ func parse() *config {
 
 	conf.args = rest
 	switch conf.cmd {
-	case cmdKey:
+	case cmdKey, cmdClearsign:
 		if len(conf.args) > 0 {
 			fatal("too many arguments")
 		}
@@ -448,6 +454,16 @@ func main() {
 					fatal("%s: %s", err, outfile)
 				}
 			}
+		}
+
+	case cmdClearsign:
+		out := bufio.NewWriter(os.Stdout)
+		in := key.Clearsign(os.Stdin)
+		if _, err := io.Copy(out, in); err != nil {
+			fatal("%s", err)
+		}
+		if err := out.Flush(); err != nil {
+			fatal("%s", err)
 		}
 	}
 }
