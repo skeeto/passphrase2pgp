@@ -5,6 +5,8 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -28,6 +30,9 @@ const (
 	cmdKey = iota
 	cmdSign
 	cmdClearsign
+
+	formatPGP = iota
+	formatSSH
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -107,6 +112,7 @@ type config struct {
 
 	armor    bool
 	check    []byte
+	format   int
 	help     bool
 	input    string
 	load     string
@@ -121,15 +127,16 @@ type config struct {
 
 func usage(w io.Writer) {
 	bw := bufio.NewWriter(w)
-	p := "passphrase2pgp"
 	i := "  "
+	b := "      "
 	f := func(s ...interface{}) {
 		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
-	f(i, p, "-K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]")
-	f(i, p, "-S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]")
-	f(i, p, "-T <-u id|-l key> [-v] [-i ppfile] [-r n] >sig.txt <doc.txt")
+	f(i, "passphrase2pgp <-u id|-l key>")
+	f(b, "-K [-anpsvx] [-c id] [-f pgp|ssh] [-i pwfile] [-r n] [-t secs]")
+	f(b, "-S [-av] [-c id] [-i pwfile] [-r n] [files...]")
+	f(b, "-T [-v] [-c id] [-i pwfile] [-r n] >signed <doc")
 	f("Commands:")
 	f(i, "-K, --key              output a key (default)")
 	f(i, "-S, --sign             output detached signatures")
@@ -137,6 +144,7 @@ func usage(w io.Writer) {
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
+	f(i, "-f, --format pgp|ssh   select key format [pgp]")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")
 	f(i, "-l, --load FILE        load key from file instead of generating")
@@ -154,6 +162,7 @@ func usage(w io.Writer) {
 func parse() *config {
 	conf := config{
 		cmd:    cmdKey,
+		format: formatPGP,
 		repeat: 1,
 	}
 
@@ -164,6 +173,7 @@ func parse() *config {
 
 		{"armor", 'a', optparse.KindNone},
 		{"check", 'c', optparse.KindRequired},
+		{"format", 'f', optparse.KindRequired},
 		{"help", 'h', optparse.KindNone},
 		{"input", 'i', optparse.KindRequired},
 		{"load", 'l', optparse.KindRequired},
@@ -213,6 +223,15 @@ func parse() *config {
 				fatal("%s: %q", err, result.Optarg)
 			}
 			conf.check = check
+		case "format":
+			switch result.Optarg {
+			case "pgp":
+				conf.format = formatPGP
+			case "ssh":
+				conf.format = formatSSH
+			default:
+				fatal("invalid format: %s", result.Optarg)
+			}
 		case "help":
 			usage(os.Stdout)
 			os.Exit(0)
@@ -375,30 +394,12 @@ func main() {
 
 	switch config.cmd {
 	case cmdKey:
-		var buf bytes.Buffer
-		if config.public {
-			buf.Write(key.PubPacket())
-			buf.Write(userid.Packet())
-			buf.Write(key.Bind(&userid, config.created))
-			if config.subkey {
-				buf.Write(subkey.PubPacket())
-				buf.Write(key.Bind(&subkey, config.created))
-			}
-		} else {
-			buf.Write(key.Packet())
-			buf.Write(userid.Packet())
-			buf.Write(key.Bind(&userid, config.created))
-			if config.subkey {
-				buf.Write(subkey.Packet())
-				buf.Write(key.Bind(&subkey, config.created))
-			}
-		}
-		output := buf.Bytes()
-		if config.armor {
-			output = openpgp.Armor(output)
-		}
-		if _, err := os.Stdout.Write(output); err != nil {
-			fatal("%s", err)
+		ck := completeKey{&key, &userid, &subkey}
+		switch config.format {
+		case formatPGP:
+			ck.outputPGP(config)
+		case formatSSH:
+			ck.outputSSH(config)
 		}
 
 	case cmdSign:
@@ -486,5 +487,126 @@ func main() {
 		if f != nil {
 			f.Close()
 		}
+	}
+}
+
+type completeKey struct {
+	key    *openpgp.SignKey
+	userid *openpgp.UserID
+	subkey *openpgp.EncryptKey
+}
+
+func (k *completeKey) outputPGP(config *config) {
+	key := k.key
+	userid := k.userid
+	subkey := k.subkey
+
+	var buf bytes.Buffer
+	if config.public {
+		buf.Write(key.PubPacket())
+		buf.Write(userid.Packet())
+		buf.Write(key.Bind(userid, config.created))
+		if config.subkey {
+			buf.Write(subkey.PubPacket())
+			buf.Write(key.Bind(subkey, config.created))
+		}
+	} else {
+		buf.Write(key.Packet())
+		buf.Write(userid.Packet())
+		buf.Write(key.Bind(userid, config.created))
+		if config.subkey {
+			buf.Write(subkey.Packet())
+			buf.Write(key.Bind(subkey, config.created))
+		}
+	}
+	output := buf.Bytes()
+
+	if config.armor {
+		output = openpgp.Armor(output)
+	}
+	if _, err := os.Stdout.Write(output); err != nil {
+		fatal("%s", err)
+	}
+}
+
+// PEM-encode a string
+func pem(str []byte) []byte {
+	buf := make([]byte, len(str)+4)
+	binary.BigEndian.PutUint32(buf, uint32(len(str)))
+	copy(buf[4:], str)
+	return buf
+}
+
+func (k *completeKey) outputSSH(config *config) {
+	// packet is the binary form of the PEM encoding
+	var packet bytes.Buffer
+	packet.Write([]byte("openssh-key-v1\x00")) // magic
+	packet.Write(pem([]byte("none")))          // ciphername
+	packet.Write(pem([]byte("none")))          // kdfname
+	packet.Write(pem([]byte{}))                // kdfoptions
+	packet.Write([]byte{0, 0, 0, 1})           // number of keys
+
+	// Public key (nested PEM)
+	var pubkey bytes.Buffer
+	pubkey.Write(pem([]byte("ssh-ed25519")))
+	pubkey.Write(pem(k.key.Pubkey()))
+	packet.Write(pem(pubkey.Bytes()))
+
+	// Private key (nested PEM)
+	var seckey bytes.Buffer
+	seckey.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // check bytes
+	seckey.Write(pem([]byte("ssh-ed25519")))
+	seckey.Write(pem(k.key.Pubkey()))
+	concat := append(k.key.Seckey()[0:32:32], k.key.Pubkey()...)
+	// (Yes, the public key has appeared three times now!)
+	seckey.Write(pem(concat))
+	seckey.Write(pem(k.userid.ID))
+	for i := 1; seckey.Len()%8 != 0; i++ {
+		seckey.Write([]byte{byte(i)})
+	}
+	packet.Write(pem(seckey.Bytes()))
+
+	// Encode the binary packet as base64
+	var packet64 bytes.Buffer
+	encoding := base64.RawStdEncoding.WithPadding('=')
+	b64 := base64.NewEncoder(encoding, &packet64)
+	b64.Write(packet.Bytes())
+	b64.Close()
+
+	// Wrap the base64 encoding into PEM ASCII format
+	var sec bytes.Buffer
+	sec.WriteString("-----BEGIN OPENSSH PRIVATE KEY-----\n")
+	data := packet64.Bytes()
+	// Pad to 8 bytes
+	for len(data) > 0 {
+		n := 70
+		if len(data) < n {
+			n = len(data)
+		}
+		sec.Write(data[:n])
+		sec.WriteByte(0x0a)
+		data = data[n:]
+	}
+	sec.WriteString("-----END OPENSSH PRIVATE KEY-----\n")
+
+	// Prepare the public key output (one line)
+	var pub bytes.Buffer
+	pub.WriteString("ssh-ed25519 ")
+	b64 = base64.NewEncoder(encoding, &pub)
+	var pubpacket bytes.Buffer
+	pubpacket.Write(pem([]byte("ssh-ed25519")))
+	pubpacket.Write(pem(k.key.Pubkey()))
+	b64.Write(pubpacket.Bytes())
+	pub.WriteByte(0x20)
+	pub.Write(k.userid.ID)
+	pub.WriteByte(0x0a)
+
+	if !config.public {
+		if _, err := os.Stdout.Write(sec.Bytes()); err != nil {
+			fatal("%s", err)
+		}
+	}
+	if _, err := os.Stdout.Write(pub.Bytes()); err != nil {
+		fatal("%s", err)
 	}
 }

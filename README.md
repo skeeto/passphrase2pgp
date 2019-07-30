@@ -63,9 +63,10 @@ Use `--help` (`-h`) for a full option listing:
 
 ```
 Usage:
-   passphrase2pgp -K <-u id|-l key> [-anpsvx] [-i ppfile] [-r n] [-t time]
-   passphrase2pgp -S <-u id|-l key> [-av] [-i ppfile] [-r n] [files...]
-   passphrase2pgp -T <-u id|-l key> [-v] [-i ppfile] [-r n] <doc.txt >sig.txt
+   passphrase2pgp <-u id|-l key>
+       -K [-anpsvx] [-c id] [-f pgp|ssh] [-i pwfile] [-r n] [-t secs]
+       -S [-av] [-c id] [-i pwfile] [-r n] [files...]
+       -T [-v] [-c id] [-i pwfile] [-r n] >signed <doc
 Commands:
    -K, --key              output a key (default)
    -S, --sign             output detached signatures
@@ -73,6 +74,7 @@ Commands:
 Options:
    -a, --armor            encode output in ASCII armor
    -c, --check KEYID      require last Key ID bytes to match
+   -f, --format pgp|ssh   select key format [pgp]
    -h, --help             print this help message
    -i, --input FILE       read passphrase from file
    -l, --load FILE        load key from file instead of generating
@@ -216,6 +218,30 @@ Tag verification (via script to fallback to GnuPG):
     passphrase (repeat): 
     $ git verify-tag tagname
     gpg: Good signature from ...
+
+## OpenSSH format
+
+Despite the name, passphrase2pgp can output a key in unprotected OpenSSH
+format, selected by `--format` (`-f`). When using this format, the
+`--armor` (`-a`), `--now` (`-n`), `--subkey` (`-s`), and `--time` (`-t`)
+options are ignored since they do not apply. The user ID becomes the key
+comment and is still used as the salt.
+
+    $ passphrase2pgp --format ssh | (umask 077; tee id_ed25519)
+
+This will be *exactly* the same key pair as when generating an OpenPGP
+key. It's just written out in a different format. The public key will be
+harmlessly appended to the private key, but it could also be regenerated
+with `ssh-keygen`:
+
+    $ ssh-keygen -y -f id_ed25519 > id_ed25519.pub
+
+With the `--public` (`-p`) option, only the public key will be output.
+
+You may want to add a protection key to the generated key, which, again,
+can be done with `ssh-keygen`:
+
+    $ ssh-keygen -p -f id_ed25519
 
 ## Justification
 
