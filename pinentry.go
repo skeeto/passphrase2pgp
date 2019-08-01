@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -75,7 +76,12 @@ func (p *pinentry) wait() []byte {
 				p.err = pinentryProtocolErr
 				return nil
 			}
-			data = p.out.Bytes()[2:]
+			var ok bool
+			data, ok = pinentryDecode(p.out.Text()[2:])
+			if !ok {
+				p.err = pinentryProtocolErr
+				return nil
+			}
 		} else {
 			p.err = pinentryProtocolErr
 			return data
@@ -90,6 +96,7 @@ func (p *pinentry) wait() []byte {
 }
 
 // Send message to pinentry and wait for its response with possible data.
+// Note: strings must be passed encoded.
 func (p *pinentry) Send(args ...string) []byte {
 	if p.err != nil {
 		return nil
@@ -113,6 +120,29 @@ func (p *pinentry) Send(args ...string) []byte {
 // Close the communication channel with pinentry so that it exits.
 func (p *pinentry) Close() {
 	p.in.Close()
+}
+
+// Decode a pinentry data string.
+func pinentryDecode(s string) (decoded []byte, valid bool) {
+	buf := make([]byte, 0, len(s))
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b == '%' {
+			if len(s[i:]) < 3 {
+				return nil, false
+			}
+			v, err := strconv.ParseUint(s[i+1:i+3], 16, 8)
+			if err != nil {
+				return nil, false
+			}
+			buf = append(buf, byte(v))
+			i += 3
+		} else {
+			buf = append(buf, b)
+			i++
+		}
+	}
+	return buf, true
 }
 
 // Read, confirm, and return a passphrase from the user via pinentry.
