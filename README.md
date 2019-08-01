@@ -63,10 +63,10 @@ Use `--help` (`-h`) for a full option listing:
 
 ```
 Usage:
-   passphrase2pgp <-u id|-l key>
-       -K [-anpsvx] [-c id] [-f pgp|ssh] [-i pwfile] [-r n] [-t secs]
-       -S [-av] [-c id] [-i pwfile] [-r n] [files...]
-       -T [-v] [-c id] [-i pwfile] [-r n] >signed <doc
+   passphrase2pgp <-u id|-l key> [-hvx] [-c id] [-e[cmd]] [-i pwfile]
+       -K [-anps] [-f pgp|ssh] [-r n] [-t secs]
+       -S [-a] [-r n] [files...]
+       -T [-r n] >doc-signed.txt <doc.txt
 Commands:
    -K, --key              output a key (default)
    -S, --sign             output detached signatures
@@ -79,6 +79,7 @@ Options:
    -i, --input FILE       read passphrase from file
    -l, --load FILE        load key from file instead of generating
    -n, --now              use current time as creation date
+   -e, --pinentry[=CMD]   use pinentry to read the passphrase
    -p, --public           only output the public key
    -r, --repeat N         number of repeated passphrase prompts
    -s, --subkey           also output an encryption subkey

@@ -8,19 +8,16 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strconv"
-	"syscall"
 	"time"
 	"unicode/utf8"
 
 	"github.com/skeeto/optparse-go"
 	"github.com/skeeto/passphrase2pgp/openpgp"
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/ssh/terminal"
 )
 
 const (
@@ -44,39 +41,12 @@ func fatal(format string, args ...interface{}) {
 	os.Exit(1)
 }
 
-// Read, confirm, and return a passphrase from the user.
-func readPassphrase(repeat int) ([]byte, error) {
-	fd := int(syscall.Stdin)
-	var out io.Writer = os.Stderr
-	if !terminal.IsTerminal(fd) {
-		tty, err := os.Create("/dev/tty") // O_RDWR
-		if err != nil {
-			fatal("failed to open /dev/tty")
-		}
-		defer tty.Close()
-		fd = int(tty.Fd())
-		out = tty
+// Read and confirm the passphrase per the user's preference.
+func readPassphrase(config *config) ([]byte, error) {
+	if config.pinentry != "" {
+		return pinentryPassphrase(config.pinentry, config.repeat)
 	}
-
-	tail := []byte("\n")
-	out.Write([]byte("passphrase: "))
-	passphrase, err := terminal.ReadPassword(fd)
-	if err != nil {
-		return nil, err
-	}
-	out.Write(tail)
-	for i := 0; i < repeat; i++ {
-		out.Write([]byte("passphrase (repeat): "))
-		again, err := terminal.ReadPassword(fd)
-		if err != nil {
-			return nil, err
-		}
-		out.Write(tail)
-		if !bytes.Equal(again, passphrase) {
-			return nil, errors.New("passphrases do not match")
-		}
-	}
-	return passphrase, nil
+	return terminalPassphrase(config.repeat)
 }
 
 // Returns the first line of a file not including \r or \n. Does not
@@ -116,6 +86,7 @@ type config struct {
 	help     bool
 	input    string
 	load     string
+	pinentry string
 	public   bool
 	repeat   int
 	subkey   bool
@@ -129,14 +100,15 @@ func usage(w io.Writer) {
 	bw := bufio.NewWriter(w)
 	i := "  "
 	b := "      "
+	p := "passphrase2pgp"
 	f := func(s ...interface{}) {
 		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
-	f(i, "passphrase2pgp <-u id|-l key>")
-	f(b, "-K [-anpsvx] [-c id] [-f pgp|ssh] [-i pwfile] [-r n] [-t secs]")
-	f(b, "-S [-av] [-c id] [-i pwfile] [-r n] [files...]")
-	f(b, "-T [-v] [-c id] [-i pwfile] [-r n] >signed <doc")
+	f(i, p, "<-u id|-l key> [-hvx] [-c id] [-e[cmd]] [-i pwfile]")
+	f(b, "-K [-anps] [-f pgp|ssh] [-r n] [-t secs]")
+	f(b, "-S [-a] [-r n] [files...]")
+	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
 	f(i, "-K, --key              output a key (default)")
 	f(i, "-S, --sign             output detached signatures")
@@ -149,6 +121,7 @@ func usage(w io.Writer) {
 	f(i, "-i, --input FILE       read passphrase from file")
 	f(i, "-l, --load FILE        load key from file instead of generating")
 	f(i, "-n, --now              use current time as creation date")
+	f(i, "-e, --pinentry[=CMD]   use pinentry to read the passphrase")
 	f(i, "-p, --public           only output the public key")
 	f(i, "-r, --repeat N         number of repeated passphrase prompts")
 	f(i, "-s, --subkey           also output an encryption subkey")
@@ -178,6 +151,8 @@ func parse() *config {
 		{"input", 'i', optparse.KindRequired},
 		{"load", 'l', optparse.KindRequired},
 		{"now", 'n', optparse.KindNone},
+		{"public", 'p', optparse.KindNone},
+		{"pinentry", 'e', optparse.KindOptional},
 		{"public", 'p', optparse.KindNone},
 		{"repeat", 'r', optparse.KindRequired},
 		{"subkey", 's', optparse.KindNone},
@@ -241,6 +216,12 @@ func parse() *config {
 			conf.load = result.Optarg
 		case "now":
 			conf.created = time.Now().Unix()
+		case "pinentry":
+			if result.Optarg != "" {
+				conf.pinentry = result.Optarg
+			} else {
+				conf.pinentry = "pinentry"
+			}
 		case "public":
 			conf.public = true
 		case "repeat":
@@ -337,7 +318,7 @@ func main() {
 		if config.input != "" {
 			passphrase, err = firstLine(config.input)
 		} else {
-			passphrase, err = readPassphrase(config.repeat)
+			passphrase, err = readPassphrase(config)
 		}
 		if err != nil {
 			fatal("%s", err)
