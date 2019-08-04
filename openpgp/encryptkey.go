@@ -16,6 +16,7 @@ const (
 type EncryptKey struct {
 	Key     []byte
 	created int64
+	expires int64
 	packet  []byte
 }
 
@@ -41,6 +42,18 @@ func (k *EncryptKey) Created() int64 {
 func (k *EncryptKey) SetCreated(time int64) {
 	k.created = time
 	k.packet = nil
+}
+
+// Expired returns the key's expiration time in unix epoch seconds. A
+// value of zero means the key doesn't expire.
+func (k *SignKey) Expires() int64 {
+	return k.expires
+}
+
+// SetExpire returns the key's expiration time in unix epoch seconds. A
+// value of zero means the key doesn't expire.
+func (k *SignKey) SetExpires(time int64) {
+	k.expires = time
 }
 
 // Seckey returns the secret key portion of this key.
@@ -110,10 +123,17 @@ func (k *EncryptKey) SignType() byte {
 	return 0x18
 }
 
-func (u *EncryptKey) Subpackets() []Subpacket {
-	return []Subpacket{
+func (k *EncryptKey) Subpackets() []Subpacket {
+	subpackets := []Subpacket{
 		// Key Flags subpacket (encrypt)
 		{Type: 27, Data: []byte{0x0c}},
+		// Key Expiration Time packet
+		{Type: 9, Data: marshal32be(uint32(k.expires - k.created))},
+	}
+	if k.expires != 0 {
+		return subpackets
+	} else {
+		return subpackets[:1]
 	}
 }
 

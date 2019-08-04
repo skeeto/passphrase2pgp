@@ -40,21 +40,18 @@ func (u *UserID) SignType() byte {
 
 func (u *UserID) Subpackets() []Subpacket {
 	subpackets := []Subpacket{
-		// Key Flags subpacket (sign and certify)
-		// This is necessary since some implementations (GitHub) treat
-		// all flags as if they were zero if not present.
-		{Type: 27, Data: []byte{0x03}},
-		// Features subpacket
+		// Features subpacket (type=30)
 		// This bit tells senders to use a Message Detection Code (MDC)
-		// packet when encrypting messages. Data encrypted with OpenPGP
-		// is, by default, unauthenticated! MDC is a mostly-broken form
-		// of authentication that will make GnuPG complain a bit less.
+		// packet when encrypting messages to this identity. Data
+		// encrypted with OpenPGP is, by default, unauthenticated! MDC
+		// is a mostly-broken form of authentication that will make
+		// GnuPG complain a bit less.
 		{Type: 30, Data: []byte{0x01}},
 	}
 	if u.EnableMDC {
-		return subpackets[:]
-	} else {
 		return subpackets[:1]
+	} else {
+		return subpackets[:0]
 	}
 }
 

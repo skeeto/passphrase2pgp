@@ -24,6 +24,7 @@ const (
 type SignKey struct {
 	Key     ed25519.PrivateKey
 	created int64
+	expires int64
 	packet  []byte
 }
 
@@ -42,6 +43,18 @@ func (k *SignKey) Created() int64 {
 func (k *SignKey) SetCreated(time int64) {
 	k.created = time
 	k.packet = nil
+}
+
+// Expired returns the key's expiration time in unix epoch seconds. A
+// value of zero means the key doesn't expire.
+func (k *EncryptKey) Expires() int64 {
+	return k.expires
+}
+
+// SetExpire returns the key's expiration time in unix epoch seconds. A
+// value of zero means the key doesn't expire.
+func (k *EncryptKey) SetExpires(time int64) {
+	k.expires = time
 }
 
 // Load entire key from OpenPGP input (Packet() output).
@@ -169,32 +182,58 @@ type Bindable interface {
 
 // Bind a Bindable object to this key using an OpenPGP packet.
 func (k *SignKey) Bind(s Bindable, created int64) []byte {
-	const fixedLen = 24
-	be := binary.BigEndian
+	var subpackets []Subpacket
+	sigtype := s.SignType()
 
-	packet := make([]byte, fixedLen, 257)
-	packet[0] = 0xc0 | 2     // packet header, new format, Signature Packet (2)
-	packet[2] = 0x04         // packet version, new (4)
-	packet[3] = s.SignType() // signature type
-	packet[4] = 22           // public-key algorithm, EdDSA
-	packet[5] = 8            // hash algorithm, SHA-256
+	packet := make([]byte, 8, 257)
+	packet[0] = 0xc0 | 2 // packet header, new format, Signature Packet (2)
+	packet[2] = 0x04     // packet version, new (4)
+	packet[3] = sigtype  // signature type
+	packet[4] = 22       // public-key algorithm, EdDSA
+	packet[5] = 8        // hash algorithm, SHA-256
 
-	// Signature Creation Time subpacket (length=5, type=2)
-	packet[8] = 5
-	packet[9] = 2
-	be.PutUint32(packet[10:14], uint32(created))
+	// Signature Creation Time subpacket (type=2)
+	sigCreated := Subpacket{
+		Type: 2,
+		Data: marshal32be(uint32(created)),
+	}
+	subpackets = append(subpackets, sigCreated)
 
-	// Issuer subpacket (length=9, type=16)
-	packet[14] = 9
-	packet[15] = 16
-	copy(packet[16:24], k.KeyID()[12:20])
+	// Issuer subpacket (type=16)
+	issuer := Subpacket{
+		Type: 16,
+		Data: k.KeyID()[12:20],
+	}
+	subpackets = append(subpackets, issuer)
 	// An Issuer Fingerprint subpacket is unnecessary here because this
 	// is a self-signature, and so even the Issuer subpacket is already
 	// redundant. The recipient already knows which key we're talking
 	// about. Technically the Issuer subpacket is optional, but GnuPG
 	// will not import a key without it.
 
-	for _, subpacket := range s.Subpackets() {
+	// Self-signature for this very key?
+	if sigtype == 0x13 {
+		// Key Flags subpacket (type=27) [sign and certify]
+		// This is necessary since some implementations (GitHub) treat
+		// all flags as if they were zero if not present.
+		flags := Subpacket{
+			Type: 27,
+			Data: []byte{0x03},
+		}
+		subpackets = append(subpackets, flags)
+
+		if k.expires != 0 {
+			// Key Expiration Time subpacket (type=9)
+			expires := Subpacket{
+				Type: 9,
+				Data: marshal32be(uint32(k.expires - k.created)),
+			}
+			subpackets = append(subpackets, expires)
+		}
+	}
+
+	subpackets = append(subpackets, s.Subpackets()...)
+	for _, subpacket := range subpackets {
 		packet = append(packet, byte(len(subpacket.Data)+1))
 		packet = append(packet, subpacket.Type)
 		packet = append(packet, subpacket.Data...)
@@ -202,11 +241,11 @@ func (k *SignKey) Bind(s Bindable, created int64) []byte {
 
 	// Hashed subpacket data length
 	hashedLen := uint16(len(packet) - 8)
-	be.PutUint16(packet[6:8], hashedLen)
+	binary.BigEndian.PutUint16(packet[6:8], hashedLen)
 
 	// Unhashed subpacket data (none)
 	packet = packet[:len(packet)+2]
-	be.PutUint16(packet[len(packet)-2:], 0)
+	binary.BigEndian.PutUint16(packet[len(packet)-2:], 0)
 
 	// Compute digest to be signed
 	h := sha256.New()

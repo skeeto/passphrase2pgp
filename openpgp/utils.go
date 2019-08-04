@@ -63,3 +63,10 @@ func readPacket(r io.Reader) ([]byte, error) {
 	}
 	return packet, nil
 }
+
+// Return a 4-byte buffer encoding a uint32.
+func marshal32be(v uint32) []byte {
+	data := make([]byte, 4)
+	binary.BigEndian.PutUint32(data, v)
+	return data
+}

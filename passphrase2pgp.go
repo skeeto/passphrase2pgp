@@ -24,6 +24,8 @@ const (
 	kdfTime   = 8
 	kdfMemory = 1024 * 1024 // 1 GB
 
+	defaultExpires = "2y"
+
 	cmdKey = iota
 	cmdSign
 	cmdClearsign
@@ -82,6 +84,7 @@ type config struct {
 
 	armor    bool
 	check    []byte
+	expires  int64
 	format   int
 	help     bool
 	input    string
@@ -105,7 +108,7 @@ func usage(w io.Writer) {
 	}
 	f("Usage:")
 	f(i, p, "<-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]")
-	f(b, "-K [-anps] [-f pgp|ssh] [-r n] [-t secs]")
+	f(b, "-K [-anps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
@@ -127,6 +130,7 @@ func usage(w io.Writer) {
 	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
 	f(i, "-u, --uid USERID       user ID for the key")
 	f(i, "-v, --verbose          print additional information")
+	f(i, "-x, --expires[=SPEC]   set key expiration time ["+defaultExpires+"]")
 	bw.Flush()
 }
 
@@ -157,6 +161,7 @@ func parse() *config {
 		{"time", 't', optparse.KindRequired},
 		{"uid", 'u', optparse.KindRequired},
 		{"verbose", 'v', optparse.KindNone},
+		{"expires", 'x', optparse.KindOptional},
 	}
 
 	var repeatSeen bool
@@ -247,6 +252,8 @@ func parse() *config {
 			uidSeen = true
 		case "verbose":
 			conf.verbose = true
+		case "expires":
+			conf.expires = timespec(result.Optarg)
 		}
 	}
 
@@ -278,6 +285,25 @@ func parse() *config {
 		}
 	}
 
+	if conf.expires != 0 {
+		delta := conf.expires - conf.created
+		if delta > 0xffffffff {
+			// Delta between created date and expiration must fit in a
+			// 32-bit integer. According to RFC 4880, this should
+			// treated as a uint32. However, GnuPG (as of 2.2.12) treats
+			// it as int32, allowing for nonsensical negative values
+			// (keys can expire before they were created) and cutting
+			// the range in half. This is a GnuPG bug, but hopefully
+			// it will be fixed before it becomes a problem.
+			fatal("key expiration too far in the future")
+			// Side note: Another GnuPG bug is that it doesn't properly
+			// process expiration dates for keys with a zero creation
+			// date (i.e. passphrase2pgp keys), and instead treats such
+			// keys as having no expiration date. Hopefully this is
+			// fixed someday, too.
+		}
+	}
+
 	conf.args = rest
 	switch conf.cmd {
 	case cmdKey:
@@ -293,6 +319,46 @@ func parse() *config {
 	}
 
 	return &conf
+}
+
+// Return a key expiration date from the given "timespec" string. See
+// the README for format information.
+func timespec(ts string) int64 {
+	if ts == "" {
+		ts = defaultExpires
+	}
+
+	unit := ts[len(ts)-1]
+	value := ts
+	var duration time.Duration
+
+	switch unit {
+	case 'd':
+		value = ts[:len(ts)-1]
+		duration = time.Hour * 24
+	case 'w':
+		value = ts[:len(ts)-1]
+		duration = time.Hour * 24 * 7
+	case 'm':
+		value = ts[:len(ts)-1]
+		duration = time.Hour * 24 * 30
+	case 'y':
+		value = ts[:len(ts)-1]
+		duration = time.Hour * 24 * 365
+	}
+
+	t, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		fatal("timespec, %s: %s", err, ts)
+	}
+	if duration != 0 {
+		t = time.Now().Unix() + int64(duration.Seconds())*t
+	}
+
+	if t < 0 {
+		fatal("timespec cannot be negative: %s", ts)
+	}
+	return t
 }
 
 func main() {
@@ -325,6 +391,7 @@ func main() {
 
 		key.Seed(seed[:32])
 		key.SetCreated(config.created)
+		key.SetExpires(config.expires)
 		userid = openpgp.UserID{
 			ID:        []byte(config.uid),
 			EnableMDC: config.subkey,
@@ -332,6 +399,7 @@ func main() {
 		if config.subkey {
 			subkey.Seed(seed[32:])
 			subkey.SetCreated(config.created)
+			subkey.SetExpires(config.expires)
 		}
 
 	} else {

@@ -64,7 +64,7 @@ Use `--help` (`-h`) for a full option listing:
 ```
 Usage:
    passphrase2pgp <-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]
-       -K [-anps] [-f pgp|ssh] [-r n] [-t secs]
+       -K [-anps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
 Commands:
@@ -86,6 +86,7 @@ Options:
    -t, --time SECONDS     key creation date (unix epoch seconds)
    -u, --uid USERID       user ID for the key
    -v, --verbose          print additional information
+   -x, --expires[=SPEC]   set key expiration time [2y]
 ```
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
@@ -103,6 +104,28 @@ not provided, the `KEYID` environment variable is used if available. In
 either case, `--repeat` (`-r`) is set to zero unless it was explicitly
 provided. The additional passphrase check is unnecessary if they Key ID
 is being checked.
+
+By default keys are not given an expiration date and do not expire. To
+retire a key, you would need to use another OpenPGP implementation to
+import your key and generate a revocation certificate. Alternatively,
+the `--expires` (`-x`) option sets an expiration date, defaulting to two
+years from now. As an optional argument, it accepts a time specification
+similar to GnuPG: days (d), weeks (w), months (m), and years (y). For
+example, `--expires=10y` or `-x10y` sets the expiration date to 10 years
+from now. Without a suffix, the value is interpreted as a specific unix
+epoch timestamp.
+
+Unfortunately there are at least two bugs in the way GnuPG processes key
+expiration dates that affect passphrase2pgp. First, keys with a zero
+creation date are incorrectly considered never to expire despite an
+explicit expiration date. (This is a security bug in GnuPG.) The second
+is that GnuPG incorrectly parses the expiration period as a signed
+integer rather than unsigned. This not only allows for nonsensical
+situations such as keys expiring before they were created, it means a
+key with a zero creation date cannot expire later than [year 2038][yr]
+(rather than year 2106).
+
+[yr]: https://en.wikipedia.org/wiki/Year_2038_problem
 
 ### Examples
 
