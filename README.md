@@ -42,7 +42,7 @@ Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
 * The `--load` (`-l`) option loads a previously generated key for use in
   other operations (signature creation, ASCII-armored public key, etc.).
 
-There are two commands:
+There are three commands:
 
 * Key generation (`--key`, `-K`) [default]: Writes a key to standard
   output. This is a secret key by default, but `--public` (`-p`)
