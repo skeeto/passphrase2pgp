@@ -117,14 +117,16 @@ epoch timestamp.
 
 Unfortunately there are at least two bugs in the way GnuPG processes key
 expiration dates that affect passphrase2pgp. First, keys with a zero
-creation date are incorrectly considered never to expire despite an
-explicit expiration date. (This is a security bug in GnuPG.) The second
-is that GnuPG incorrectly parses the expiration period as a signed
-integer rather than unsigned. This not only allows for nonsensical
-situations such as keys expiring before they were created, it means a
-key with a zero creation date cannot expire later than [year 2038][yr]
-(rather than year 2106).
+creation date are [incorrectly considered never to expire][t4670]
+despite an explicit expiration date. The second is that GnuPG
+[incorrectly parses the expiration period as a signed integer][t4669]
+rather than unsigned. This not only allows for nonsensical situations
+such as keys expiring before they were created, it means a key with a
+zero creation date cannot expire later than [year 2038][yr] (rather than
+year 2106).
 
+[t4669]: https://dev.gnupg.org/T4669
+[t4670]: https://dev.gnupg.org/T4670
 [yr]: https://en.wikipedia.org/wiki/Year_2038_problem
 
 ### Examples
