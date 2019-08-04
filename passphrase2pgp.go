@@ -93,7 +93,6 @@ type config struct {
 	created  int64
 	uid      string
 	verbose  bool
-	paranoid bool
 }
 
 func usage(w io.Writer) {
@@ -105,7 +104,7 @@ func usage(w io.Writer) {
 		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
-	f(i, p, "<-u id|-l key> [-hvx] [-c id] [-e[cmd]] [-i pwfile]")
+	f(i, p, "<-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]")
 	f(b, "-K [-anps] [-f pgp|ssh] [-r n] [-t secs]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
@@ -128,7 +127,6 @@ func usage(w io.Writer) {
 	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
 	f(i, "-u, --uid USERID       user ID for the key")
 	f(i, "-v, --verbose          print additional information")
-	f(i, "-x, --paranoid         increase key generation costs")
 	bw.Flush()
 }
 
@@ -159,7 +157,6 @@ func parse() *config {
 		{"time", 't', optparse.KindRequired},
 		{"uid", 'u', optparse.KindRequired},
 		{"verbose", 'v', optparse.KindNone},
-		{"paranoid", 'x', optparse.KindNone},
 	}
 
 	var repeatSeen bool
@@ -250,8 +247,6 @@ func parse() *config {
 			uidSeen = true
 		case "verbose":
 			conf.verbose = true
-		case "paranoid":
-			conf.paranoid = true
 		}
 	}
 
@@ -326,9 +321,6 @@ func main() {
 
 		// Run KDF on passphrase
 		scale := 1
-		if config.paranoid {
-			scale = 2 // actually 4x difficulty
-		}
 		seed := kdf(passphrase, []byte(config.uid), scale)
 
 		key.Seed(seed[:32])

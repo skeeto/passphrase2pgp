@@ -63,7 +63,7 @@ Use `--help` (`-h`) for a full option listing:
 
 ```
 Usage:
-   passphrase2pgp <-u id|-l key> [-hvx] [-c id] [-e[cmd]] [-i pwfile]
+   passphrase2pgp <-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]
        -K [-anps] [-f pgp|ssh] [-r n] [-t secs]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
@@ -86,7 +86,6 @@ Options:
    -t, --time SECONDS     key creation date (unix epoch seconds)
    -u, --uid USERID       user ID for the key
    -v, --verbose          print additional information
-   -x, --paranoid         increase key generation costs
 ```
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key
@@ -104,9 +103,6 @@ not provided, the `KEYID` environment variable is used if available. In
 either case, `--repeat` (`-r`) is set to zero unless it was explicitly
 provided. The additional passphrase check is unnecessary if they Key ID
 is being checked.
-
-The `--paranoid` (`-x`) setting quadruples the KDF difficulty. This will
-result in a different key for the same passphrase.
 
 ### Examples
 
@@ -190,7 +186,7 @@ and commits. Just configure `gpg.program` to passphrase2pgp:
 However, with this setting you will be unable to verify commits and
 tags. To work around this problem, wrap passphrase2pgp in a script like
 the following, with options adjusted to taste (add `--repeat`, `--time`,
-`--paranoid`, etc.):
+etc.):
 
 ```sh
 #!/bin/sh -e
