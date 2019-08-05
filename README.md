@@ -115,19 +115,19 @@ example, `--expires=10y` or `-x10y` sets the expiration date to 10 years
 from now. Without a suffix, the value is interpreted as a specific unix
 epoch timestamp.
 
-Unfortunately there are at least two bugs in the way GnuPG processes key
-expiration dates that affect passphrase2pgp. First, keys with a zero
-creation date are [incorrectly considered never to expire][t4670]
-despite an explicit expiration date. The second is that GnuPG
-[incorrectly parses the expiration period as a signed integer][t4669]
-rather than unsigned. This not only allows for nonsensical situations
-such as keys expiring before they were created, it means a key with a
-zero creation date cannot expire later than [year 2038][yr] (rather than
-year 2106).
+Unfortunately there's a bug in the way GnuPG processes key expiration
+dates that affect passphrase2pgp. Keys with a zero creation date are
+[incorrectly considered never to expire][t4670] despite an explicit
+expiration date. This means if you use passphrase2pgp's default creation
+date, the `--expires` (`-x`) may *appear* not to work, and **GnuPG will
+incorrectly verify signatures from your expired keys.** Further, GnuPG
+[generally doesn't compute expiration dates correctly][T4669]. OpenPGP
+allows expiration dates beyond the year 2106, and, unlike GnuPG,
+passphrase2pgp will allow you construct such keys, but GnuPG will use an
+incorrect (earlier) date.
 
 [t4669]: https://dev.gnupg.org/T4669
 [t4670]: https://dev.gnupg.org/T4670
-[yr]: https://en.wikipedia.org/wiki/Year_2038_problem
 
 ### Examples
 
