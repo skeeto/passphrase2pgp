@@ -392,10 +392,7 @@ func main() {
 		key.Seed(seed[:32])
 		key.SetCreated(config.created)
 		key.SetExpires(config.expires)
-		userid = openpgp.UserID{
-			ID:        []byte(config.uid),
-			EnableMDC: config.subkey,
-		}
+		userid = openpgp.UserID{[]byte(config.uid)}
 		if config.subkey {
 			subkey.Seed(seed[32:])
 			subkey.SetCreated(config.created)
@@ -542,11 +539,16 @@ func (k *completeKey) outputPGP(config *config) {
 	userid := k.userid
 	subkey := k.subkey
 
+	flags := 0
+	if config.subkey {
+		flags |= openpgp.FlagMDC
+	}
+
 	var buf bytes.Buffer
 	if config.public {
 		buf.Write(key.PubPacket())
 		buf.Write(userid.Packet())
-		buf.Write(key.Bind(userid, config.created))
+		buf.Write(key.SelfSign(userid, config.created, flags))
 		if config.subkey {
 			buf.Write(subkey.PubPacket())
 			buf.Write(key.Bind(subkey, config.created))
@@ -554,7 +556,7 @@ func (k *completeKey) outputPGP(config *config) {
 	} else {
 		buf.Write(key.Packet())
 		buf.Write(userid.Packet())
-		buf.Write(key.Bind(userid, config.created))
+		buf.Write(key.SelfSign(userid, config.created, flags))
 		if config.subkey {
 			buf.Write(subkey.Packet())
 			buf.Write(key.Bind(subkey, config.created))

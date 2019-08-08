@@ -18,6 +18,10 @@ const (
 	// SignKeyPubLen is the size of the public part of an OpenPGP packet.
 	SignKeyPubLen = 53
 	signKeySecLen = 3 + 32 + 2
+
+	// FlagMDC indicates that the identity making a self-signature
+	// prefers to recieve a Modification Detection Code (MDC).
+	FlagMDC = iota
 )
 
 // SignKey represents an Ed25519 sign key (EdDSA).
@@ -163,138 +167,112 @@ func (k *SignKey) KeyID() []byte {
 	return h.Sum(nil)
 }
 
-type Subpacket struct {
+type subpacket struct {
 	Type byte
 	Data []byte
 }
 
-// Bindable represents something that can be signed by a sign key.
-type Bindable interface {
-	// SignType returns the signature type ID needed for this object.
-	SignType() byte
+// Bind a subkey to this signing key, returning the signature packet.
+func (k *SignKey) Bind(subkey *EncryptKey, when int64) []byte {
+	const sigtype = 0x18 // Subkey Binding Signature
+	h := sha256.New()
+	pubkey := k.PubPacket()
+	h.Write([]byte{0x99, 0, byte(len(pubkey) - 2)})
+	h.Write(pubkey[2:])
+	pubsubkey := subkey.PubPacket()
+	h.Write([]byte{0x99, 0, byte(len(pubsubkey) - 2)})
+	h.Write(pubsubkey[2:])
 
-	// SignPackets returns the hashed subpackets for this key.
-	Subpackets() []Subpacket
+	subpackets := []subpacket{
+		// Key Flags subpacket (encrypt)
+		{Type: 27, Data: []byte{0x0c}},
+	}
+	if subkey.expires != 0 {
+		// Key Expiration Time packet
+		delta := uint32(subkey.expires - subkey.created)
+		expires := subpacket{Type: 9, Data: marshal32be(delta)}
+		subpackets = append(subpackets, expires)
+	}
 
-	// SignData returns the data to be concatenated with other hash input.
-	SignData() []byte
+	return k.sign(sigInput{h, sigtype, when, subpackets})
 }
 
-// Bind a Bindable object to this key using an OpenPGP packet.
-func (k *SignKey) Bind(s Bindable, created int64) []byte {
-	var subpackets []Subpacket
-	sigtype := s.SignType()
+func (k *SignKey) SelfSign(userid *UserID, when int64, flags int) []byte {
+	const sigtype = 0x13 // Positive certification
+	h := sha256.New()
+	key := k.PubPacket()
+	h.Write([]byte{0x99, 0, byte(len(key) - 2)})
+	h.Write(key[2:])
+	uid := userid.Packet()
+	h.Write([]byte{0xb4, 0, 0, 0, byte(len(uid) - 2)})
+	h.Write(uid[2:])
 
-	packet := make([]byte, 8, 257)
-	packet[0] = 0xc0 | 2 // packet header, new format, Signature Packet (2)
-	packet[2] = 0x04     // packet version, new (4)
-	packet[3] = sigtype  // signature type
-	packet[4] = 22       // public-key algorithm, EdDSA
-	packet[5] = 8        // hash algorithm, SHA-256
-
-	// Signature Creation Time subpacket (type=2)
-	sigCreated := Subpacket{
-		Type: 2,
-		Data: marshal32be(uint32(created)),
-	}
-	subpackets = append(subpackets, sigCreated)
-
-	// Issuer subpacket (type=16)
-	issuer := Subpacket{
-		Type: 16,
-		Data: k.KeyID()[12:20],
-	}
-	subpackets = append(subpackets, issuer)
 	// An Issuer Fingerprint subpacket is unnecessary here because this
 	// is a self-signature, and so even the Issuer subpacket is already
 	// redundant. The recipient already knows which key we're talking
 	// about. Technically the Issuer subpacket is optional, but GnuPG
 	// will not import a key without it.
+	var subpackets []subpacket
 
-	// Self-signature for this very key?
-	if sigtype == 0x13 {
-		// Key Flags subpacket (type=27) [sign and certify]
-		// This is necessary since some implementations (GitHub) treat
-		// all flags as if they were zero if not present.
-		flags := Subpacket{
-			Type: 27,
-			Data: []byte{0x03},
-		}
-		subpackets = append(subpackets, flags)
+	// Key Flags subpacket (type=27) [sign and certify]
+	// This is necessary since some implementations (GitHub) treat
+	// all flags as if they were zero if not present.
+	keyflags := subpacket{
+		Type: 27,
+		Data: []byte{0x03},
+	}
+	subpackets = append(subpackets, keyflags)
 
-		if k.expires != 0 {
-			// Key Expiration Time subpacket (type=9)
-			expires := Subpacket{
-				Type: 9,
-				Data: marshal32be(uint32(k.expires - k.created)),
-			}
-			subpackets = append(subpackets, expires)
+	if k.expires != 0 {
+		// Key Expiration Time subpacket (type=9)
+		expires := subpacket{
+			Type: 9,
+			Data: marshal32be(uint32(k.expires - k.created)),
 		}
+		subpackets = append(subpackets, expires)
 	}
 
-	subpackets = append(subpackets, s.Subpackets()...)
-	for _, subpacket := range subpackets {
-		packet = append(packet, byte(len(subpacket.Data)+1))
-		packet = append(packet, subpacket.Type)
-		packet = append(packet, subpacket.Data...)
+	if flags&FlagMDC != 0 {
+		// Features subpacket (type=30)
+		mdc := subpacket{Type: 30, Data: []byte{0x01}}
+		subpackets = append(subpackets, mdc)
 	}
 
-	// Hashed subpacket data length
-	hashedLen := uint16(len(packet) - 8)
-	binary.BigEndian.PutUint16(packet[6:8], hashedLen)
+	return k.sign(sigInput{h, sigtype, when, subpackets})
+}
 
-	// Unhashed subpacket data (none)
-	packet = packet[:len(packet)+2]
-	binary.BigEndian.PutUint16(packet[len(packet)-2:], 0)
-
-	// Compute digest to be signed
+// Certify a pairing of public key and user ID packet, returning the
+// signature packet. This accept byte slices so that arbitrary packets
+// can be certified, not just formats understood by this package.
+func (k *SignKey) Certify(key, uid []byte, when int64) []byte {
+	const sigtype = 0x10 // Generic certification
 	h := sha256.New()
-
-	// Write public key
-	h.Write([]byte{0x99, 0, 51})
-	h.Write(k.PubPacket()[2:])
-
-	// Write target of Bind()
-	h.Write(s.SignData())
-
-	// Write hash trailers
-	h.Write(packet[2 : hashedLen+8])                       // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, byte(hashedLen + 6)}) // final trailer
-
-	// Compute hash and sign
-	sigsum := h.Sum(nil)
-	sig := ed25519.Sign(k.Key, sigsum)
-
-	// hash preview
-	packet = append(packet, sigsum[:2]...)
-
-	// signature
-	r := sig[:32]
-	packet = append(packet, mpi(r)...)
-	m := sig[32:]
-	packet = append(packet, mpi(m)...)
-
-	// Finalize
-	packet[1] = byte(len(packet)) - 2 // packet length
-	return packet
+	h.Write([]byte{0x99, 0, byte(len(key) - 2)})
+	h.Write(key[2:])
+	h.Write([]byte{0xb4, 0, 0, 0, byte(len(uid) - 2)})
+	h.Write(uid[2:])
+	subpackets := []subpacket{fingerprint(k.KeyID())}
+	return k.sign(sigInput{h, sigtype, when, subpackets})
 }
 
 // Sign binary data with this key using an OpenPGP signature packet.
 func (k *SignKey) Sign(src io.Reader) ([]byte, error) {
-	const sigtype = 0x00 // binary document
+	const sigtype = 0x00 // Binary document
 	// Compute digest to be signed
 	h := sha256.New()
 	if _, err := io.Copy(h, src); err != nil {
 		return nil, err
 	}
-	return k.sign(h, sigtype), nil
+	subpackets := []subpacket{fingerprint(k.KeyID())}
+	in := sigInput{h, sigtype, time.Now().Unix(), subpackets}
+	return k.sign(in), nil
 }
 
 // Clearsign returns a new cleartext stream signer. Data from the
 // given reader will be cleartext-signed and wrtten into the returned
 // reader. The returned reader must either be read completely or closed.
 func (k *SignKey) Clearsign(src io.Reader) io.ReadCloser {
-	const sigtype = 0x01 // text document
+	const sigtype = 0x01 // Text document
 	r, w := io.Pipe()
 	go func() {
 		open := []byte("-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\n")
@@ -342,7 +320,10 @@ func (k *SignKey) Clearsign(src io.Reader) io.ReadCloser {
 		if err := s.Err(); err != nil {
 			w.CloseWithError(err)
 		}
-		sig := Armor(k.sign(h, sigtype))
+
+		subpackets := []subpacket{fingerprint(k.KeyID())}
+		in := sigInput{h, sigtype, time.Now().Unix(), subpackets}
+		sig := Armor(k.sign(in))
 		if _, err := w.Write(sig); err != nil {
 			return
 		}
@@ -351,51 +332,68 @@ func (k *SignKey) Clearsign(src io.Reader) io.ReadCloser {
 	return r
 }
 
-// Generic signature framework for both binary and text signatures.
-func (k *SignKey) sign(h hash.Hash, sigtype byte) []byte {
-	const (
-		hashedLen = 39
-		fixedLen  = 51
-	)
-	be := binary.BigEndian
-
-	packet := make([]byte, fixedLen, fixedLen+66)
-	packet[0] = 0xc0 | 2 // packet header, new format, Signature Packet (2)
-	packet[2] = 0x04     // packet version, new (4)
-	packet[3] = sigtype  // signature type
-	packet[4] = 22       // public-key algorithm, EdDSA
-	packet[5] = 8        // hash algorithm, SHA-256
-	be.PutUint16(packet[6:8], hashedLen)
-
-	// Signature Creation Time subpacket (length=5, type=2)
-	packet[8] = 5
-	packet[9] = 2
-	created := time.Now().Unix()
-	be.PutUint32(packet[10:14], uint32(created))
-
-	// Issuer subpacket (length=9, type=16)
-	packet[14] = 9
-	packet[15] = 16
-	keyid := k.KeyID()
-	copy(packet[16:24], keyid[12:20])
-
+func fingerprint(keyid []byte) subpacket {
 	// Issuer Fingerprint subpacket (length=22, type=33)
-	packet[24] = 22
-	packet[25] = 33
-	packet[26] = 04 // fingerprint version
-	copy(packet[27:47], keyid)
+	return subpacket{Type: 33, Data: append([]byte{0x04}, keyid...)}
+}
+
+type sigInput struct {
+	h          hash.Hash
+	sigtype    byte
+	when       int64
+	subpackets []subpacket
+}
+
+func (k *SignKey) sign(in sigInput) []byte {
+	var subpackets []subpacket
+
+	packet := make([]byte, 8, 257)
+	packet[0] = 0xc0 | 2   // packet header, new format, Signature Packet (2)
+	packet[2] = 0x04       // packet version, new (4)
+	packet[3] = in.sigtype // signature type
+	packet[4] = 22         // public-key algorithm, EdDSA
+	packet[5] = 8          // hash algorithm, SHA-256
+
+	// Signature Creation Time subpacket (type=2)
+	sigCreated := subpacket{
+		Type: 2,
+		Data: marshal32be(uint32(in.when)),
+	}
+	subpackets = append(subpackets, sigCreated)
+
+	// Issuer subpacket (type=16)
+	issuer := subpacket{
+		Type: 16,
+		Data: k.KeyID()[12:20],
+	}
+	subpackets = append(subpackets, issuer)
+
+	subpackets = append(subpackets, in.subpackets...)
+	for _, subpacket := range subpackets {
+		packet = append(packet, byte(len(subpacket.Data)+1))
+		packet = append(packet, subpacket.Type)
+		packet = append(packet, subpacket.Data...)
+	}
+
+	// Hashed subpacket data length
+	hashedLen := uint16(len(packet) - 8)
+	binary.BigEndian.PutUint16(packet[6:8], hashedLen)
 
 	// Unhashed subpacket data (none)
-	be.PutUint16(packet[47:49], 0)
+	packet = packet[:len(packet)+2]
+	binary.BigEndian.PutUint16(packet[len(packet)-2:], 0)
 
-	// Append trailers to the end of the digest input
-	h.Write(packet[2 : hashedLen+8])                 // trailer
-	h.Write([]byte{4, 0xff, 0, 0, 0, hashedLen + 6}) // final trailer
+	// Write hash trailers
+	h := in.h
+	h.Write(packet[2 : hashedLen+8])                       // trailer
+	h.Write([]byte{4, 0xff, 0, 0, 0, byte(hashedLen + 6)}) // final trailer
+
+	// Compute hash and sign
 	sigsum := h.Sum(nil)
 	sig := ed25519.Sign(k.Key, sigsum)
 
 	// hash preview
-	copy(packet[49:51], sigsum[:2])
+	packet = append(packet, sigsum[:2]...)
 
 	// signature
 	r := sig[:32]

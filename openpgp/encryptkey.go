@@ -119,30 +119,6 @@ func (k *EncryptKey) PubPacket() []byte {
 	return packet
 }
 
-func (k *EncryptKey) SignType() byte {
-	return 0x18
-}
-
-func (k *EncryptKey) Subpackets() []Subpacket {
-	subpackets := []Subpacket{
-		// Key Flags subpacket (encrypt)
-		{Type: 27, Data: []byte{0x0c}},
-		// Key Expiration Time packet
-		{Type: 9, Data: marshal32be(uint32(k.expires - k.created))},
-	}
-	if k.expires != 0 {
-		return subpackets
-	} else {
-		return subpackets[:1]
-	}
-}
-
-func (k *EncryptKey) SignData() []byte {
-	prefix := []byte{0x99, 0, 56}
-	packet := k.PubPacket()[2:]
-	return append(prefix, packet...)
-}
-
 // Returns a reversed copy of its input.
 func reverse(b []byte) []byte {
 	c := make([]byte, len(b))
