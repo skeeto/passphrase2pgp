@@ -2,9 +2,12 @@ package openpgp
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"math/bits"
 )
+
+var InvalidPacketErr = errors.New("invalid OpenPGP data")
 
 // Returns data encoded as an OpenPGP multiprecision integer.
 func mpi(data []byte) []byte {
@@ -42,6 +45,103 @@ func checksum(mpi []byte) uint16 {
 		checksum += uint16(b)
 	}
 	return checksum
+}
+
+// Packet represents a packet container.
+type Packet struct {
+	Tag     byte
+	HdrLen  int
+	BodyLen int
+	Body    []byte
+}
+
+// ParsePacket returns the header of next packet in the buffer and the
+// bytes following the packet.
+func ParsePacket(buf []byte) (Packet, []byte, error) {
+	var p Packet
+
+	if len(buf) < 2 || buf[0]&0x80 == 0 {
+		return p, nil, InvalidPacketErr
+	}
+
+	if buf[0]&0x40 != 0 {
+		// New format
+		p.Tag = buf[0] & 0x3f
+
+		n0 := int(buf[1])
+		if n0 < 192 {
+			p.HdrLen = 2
+			p.BodyLen = n0
+		} else if n0 == 0xff {
+			p.HdrLen = 6
+			if len(buf) < p.HdrLen {
+				return p, nil, InvalidPacketErr
+			}
+			p.BodyLen = int(binary.BigEndian.Uint32(buf[2:]))
+		} else {
+			p.HdrLen = 3
+			if len(buf) < p.HdrLen {
+				return p, nil, InvalidPacketErr
+			}
+			n1 := int(buf[2])
+			p.BodyLen = ((n0 - 192) << 8) + n1 + 192
+		}
+
+	} else {
+		// Old format
+		p.Tag = (buf[0] >> 2) & 0x0f
+
+		switch buf[0] & 0x03 {
+		case 0:
+			p.HdrLen = 2
+		case 1:
+			p.HdrLen = 3
+		case 2:
+			p.HdrLen = 5
+		case 3:
+			return p, nil, InvalidPacketErr // don't bother
+		}
+
+		if len(buf) < p.HdrLen {
+			return p, nil, InvalidPacketErr
+		}
+		switch p.HdrLen {
+		case 2:
+			p.BodyLen = int(buf[1])
+		case 3:
+			p.BodyLen = int(binary.BigEndian.Uint16(buf[1:]))
+		case 5:
+			p.BodyLen = int(binary.BigEndian.Uint32(buf[1:]))
+		}
+	}
+
+	if len(buf) < p.HdrLen+p.BodyLen {
+		return p, nil, InvalidPacketErr
+	}
+	p.Body = buf[p.HdrLen : p.HdrLen+p.BodyLen]
+	return p, buf[p.HdrLen+p.BodyLen:], nil
+}
+
+func (p *Packet) Encode() []byte {
+	n := len(p.Body)
+	if n <= 191 {
+		packet := make([]byte, 2+n)
+		packet[0] = 0xc0 | p.Tag
+		packet[1] = byte(n)
+		return append(packet[:2], p.Body...)
+	} else if n <= 8383 {
+		packet := make([]byte, 3+n)
+		packet[0] = 0xc0 | p.Tag
+		packet[1] = byte((n-192)>>8) + 192
+		packet[2] = byte(n - 192)
+		return append(packet[:3], p.Body...)
+	} else {
+		packet := make([]byte, 6+n)
+		packet[0] = 0xc0 | p.Tag
+		packet[1] = 0xff
+		binary.BigEndian.PutUint32(packet[2:], uint32(n))
+		return append(packet[:6], p.Body...)
+	}
 }
 
 // Returns the entire next packet from the input. Packets are always at

@@ -247,10 +247,19 @@ func (k *SignKey) SelfSign(userid *UserID, when int64, flags int) []byte {
 func (k *SignKey) Certify(key, uid []byte, when int64) []byte {
 	const sigtype = 0x10 // Generic certification
 	h := sha256.New()
-	h.Write([]byte{0x99, 0, byte(len(key) - 2)})
-	h.Write(key[2:])
-	h.Write([]byte{0xb4, 0, 0, 0, byte(len(uid) - 2)})
-	h.Write(uid[2:])
+
+	prefix := []byte{0x99, 0, 0}
+	keypkt, _, _ := ParsePacket(key)
+	binary.BigEndian.PutUint16(prefix[1:], uint16(keypkt.BodyLen))
+	h.Write(prefix)
+	h.Write(keypkt.Body)
+
+	prefix = []byte{0xb4, 0, 0, 0, 0}
+	uidpkt, _, _ := ParsePacket(uid)
+	binary.BigEndian.PutUint32(prefix[1:], uint32(uidpkt.BodyLen))
+	h.Write(prefix)
+	h.Write(uidpkt.Body)
+
 	subpackets := []subpacket{fingerprint(k.KeyID())}
 	return k.sign(sigInput{h, sigtype, when, subpackets})
 }
