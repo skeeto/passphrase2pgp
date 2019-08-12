@@ -217,8 +217,9 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 // KeyID returns the Key ID for a sign key.
 func (k *SignKey) KeyID() []byte {
 	h := sha1.New()
-	h.Write([]byte{0x99, 0, 51})         // "packet" length = 51
-	h.Write(k.Packet()[2:SignKeyPubLen]) // public key portion
+	packet := k.PubPacket()[2:] // chop off header
+	h.Write([]byte{0x99, 0, byte(len(packet))})
+	h.Write(packet)
 	return h.Sum(nil)
 }
 
