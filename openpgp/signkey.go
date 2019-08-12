@@ -29,9 +29,6 @@ const (
 
 	// Encoded S2K octet count.
 	s2kCount = 0xff // maximum strength
-
-	// Use GnuPG conventions instead of OpenPGP where they differ.
-	gnupgCompat = true
 )
 
 var (
@@ -224,29 +221,20 @@ func decodeS2K(c byte) int {
 // Compute a symmetric protection key via S2K.
 func s2k(passphrase, salt []byte, count int) []byte {
 	h := sha256.New()
-	if gnupgCompat {
-		// Due to an old bug, GnuPG's S2K subtly differs from OpenPGP
-		// making them incompatible. This branch implements the GnuPG
-		// verison.
-		// https://dev.gnupg.org/T4676
-		full := make([]byte, 8+len(passphrase))
-		copy(full[0:], salt)
-		copy(full[8:], passphrase)
-		iterations := count / len(full)
-		for i := 0; i < iterations; i++ {
-			h.Write(full)
-		}
-		tail := count - iterations*len(full)
-		h.Write(full[:tail])
-	} else {
-		// OpenPGP, incompatible with GnuPG
-		inlen := 8 + len(passphrase)
-		iterations := (count + inlen - 1) / inlen
-		for i := 0; i < iterations; i++ {
-			h.Write(salt)
-			h.Write(passphrase)
-		}
+	// Note: This implements S2K as it is actually used in practice by
+	// both GnuPG and PGP. The OpenPGP standard (3.7.1.3) is subtly
+	// incorrect in its description, and that algorithm is not used by
+	// actual implementations.
+	// https://dev.gnupg.org/T4676
+	full := make([]byte, 8+len(passphrase))
+	copy(full[0:], salt)
+	copy(full[8:], passphrase)
+	iterations := count / len(full)
+	for i := 0; i < iterations; i++ {
+		h.Write(full)
 	}
+	tail := count - iterations*len(full)
+	h.Write(full[:tail])
 	return h.Sum(nil)
 }
 

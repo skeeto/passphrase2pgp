@@ -136,14 +136,6 @@ passphrase2pgp will reuse your derivation passphrase as the protection
 passphrase. However, keep in mind that the S2K algorithm is *much*
 weaker than the algorithm used to derive the asymmetric key, Argon2id.
 
-Important note: [**GnuPG's S2K was implemented incorrectly and is
-incompatible with OpenPGP**][t4676]. Since this defect went practically
-unnoticed for literally two decades, GnuPG's algorithm has become the de
-facto standard. As a result, passphrase2pgp uses GnuPG's S2K algorithm,
-not the OpenPGP standard, since compatibility with GnuPG is more useful.
-
-[t4676]: https://dev.gnupg.org/T4676
-
 ### Examples
 
 Generate a private key and send it to GnuPG (with no protection passphrase):
