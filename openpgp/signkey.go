@@ -3,12 +3,9 @@ package openpgp
 import (
 	"bufio"
 	"bytes"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"hash"
@@ -26,9 +23,6 @@ const (
 	// FlagMDC indicates that the identity making a self-signature
 	// prefers to recieve a Modification Detection Code (MDC).
 	FlagMDC = iota
-
-	// Encoded S2K octet count.
-	s2kCount = 0xff // maximum strength
 )
 
 var (
@@ -44,13 +38,11 @@ type SignKey struct {
 	Key     ed25519.PrivateKey
 	created int64
 	expires int64
-	packet  []byte
 }
 
 // Seed sets the 32-byte seed for a sign key.
 func (k *SignKey) Seed(seed []byte) {
 	k.Key = ed25519.NewKeyFromSeed(seed)
-	k.packet = nil
 }
 
 // Created returns the key's creation date in unix epoch seconds.
@@ -61,7 +53,6 @@ func (k *SignKey) Created() int64 {
 // SetCreated sets the creation date in unix epoch seconds.
 func (k *SignKey) SetCreated(time int64) {
 	k.created = time
-	k.packet = nil
 }
 
 // Expired returns the key's expiration time in unix epoch seconds. A
@@ -135,19 +126,9 @@ func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 		iv := body[64:80]
 		data := body[80:]
 		key := s2k(passphrase, salt, count)
-
-		block, _ := aes.NewCipher(key)
-		stream := cipher.NewCFBDecrypter(block, iv)
-		stream.XORKeyStream(data, data)
-		var check []byte
-		seckey, check = mpiDecode(data, 32)
-		if seckey == nil {
-			return DecryptKeyErr
-		}
-
-		mac := sha1.New()
-		mac.Write(mpi(seckey))
-		if subtle.ConstantTimeCompare(mac.Sum(nil), check) == 0 {
+		var ok bool
+		seckey, ok = s2kDecrypt(key, iv, data)
+		if !ok {
 			return DecryptKeyErr
 		}
 	}
@@ -169,75 +150,46 @@ func (k *SignKey) Pubkey() []byte {
 	return k.Key[32:]
 }
 
-// Packet returns an OpenPGP packet for a sign key.
-func (k *SignKey) Packet() []byte {
-	be := binary.BigEndian
-
-	if k.packet != nil {
-		return k.packet
-	}
-
-	packet := make([]byte, SignKeyPubLen+1, SignKeyPubLen+signKeySecLen)
-	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
+// PubPacket returns a public key packet for this key.
+func (k *SignKey) PubPacket() []byte {
+	packet := make([]byte, SignKeyPubLen, 256)
+	packet[0] = 0xc0 | 6 // packet header, Public-Key packet (6)
 	packet[2] = 0x04     // packet version, new (4)
 
-	// Public Key
-	be.PutUint32(packet[3:], uint32(k.created)) // creation date
-	packet[7] = 22                              // algorithm, EdDSA
-	packet[8] = 9                               // OID length
+	binary.BigEndian.PutUint32(packet[3:], uint32(k.created))
+	packet[7] = 22 // algorithm, EdDSA
+	packet[8] = 9  // OID length
 	// OID (1.3.6.1.4.1.11591.15.1)
 	oid := []byte{0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01}
 	copy(packet[9:], oid)
-	be.PutUint16(packet[18:], 263)  // public key length (always 263 bits)
+
+	// Public key length (always 263 bits)
+	binary.BigEndian.PutUint16(packet[18:], 263)
 	packet[20] = 0x40               // MPI prefix
 	copy(packet[21:53], k.Pubkey()) // public key (32 bytes)
 
+	packet[1] = byte(len(packet) - 2) // packet length
+	return packet
+}
+
+// Packet returns an OpenPGP packet for a sign key.
+func (k *SignKey) Packet() []byte {
+	packet := k.PubPacket()
+	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
+
 	// Secret Key
-	packet[53] = 0 // string-to-key, unencrypted
+	packet = append(packet, 0) // string-to-key, unencrypted
 	mpikey := mpi(k.Seckey())
 	packet = append(packet, mpikey...)
 	// Append checksum
 	packet = packet[:len(packet)+2]
-	be.PutUint16(packet[len(packet)-2:], checksum(mpikey))
+	binary.BigEndian.PutUint16(packet[len(packet)-2:], checksum(mpikey))
 
 	packet[1] = byte(len(packet) - 2) // packet length
-	k.packet = packet
 	return packet
 }
 
-// PubPacket returns a public key packet for this key.
-func (k *SignKey) PubPacket() []byte {
-	packet := make([]byte, SignKeyPubLen)
-	packet[0] = 0xc0 | 6 // packet header, Public-Key packet (6)
-	packet[1] = SignKeyPubLen - 2
-	copy(packet[2:], k.Packet()[2:])
-	return packet
-}
-
-func decodeS2K(c byte) int {
-	return (16 + int(c&15)) << (uint(c>>4) + 6)
-}
-
-// Compute a symmetric protection key via S2K.
-func s2k(passphrase, salt []byte, count int) []byte {
-	h := sha256.New()
-	// Note: This implements S2K as it is actually used in practice by
-	// both GnuPG and PGP. The OpenPGP standard (3.7.1.3) is subtly
-	// incorrect in its description, and that algorithm is not used by
-	// actual implementations.
-	// https://dev.gnupg.org/T4676
-	full := make([]byte, 8+len(passphrase))
-	copy(full[0:], salt)
-	copy(full[8:], passphrase)
-	iterations := count / len(full)
-	for i := 0; i < iterations; i++ {
-		h.Write(full)
-	}
-	tail := count - iterations*len(full)
-	h.Write(full[:tail])
-	return h.Sum(nil)
-}
-
+// EncPacket returns a protected secret key packet.
 func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	var saltIV [24]byte
 	if _, err := rand.Read(saltIV[:]); err != nil {
@@ -245,21 +197,12 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	}
 	salt := saltIV[:8]
 	iv := saltIV[8:]
-
-	// Compute symmetric protection key via S2K
 	key := s2k(passphrase, salt, decodeS2K(s2kCount))
+	protected := s2kEncrypt(key, iv, k.Seckey())
 
-	// Encrypt the secret key, with SHA-1 "MAC"
-	mpikey := mpi(k.Seckey())
-	mac := sha1.New()
-	mac.Write(mpikey)
-	seckey := mac.Sum(mpikey)
-	block, _ := aes.NewCipher(key)
-	stream := cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(seckey, seckey)
+	packet := k.PubPacket()[:57]
+	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
 
-	// Rewrite secret portion of packet
-	packet := k.Packet()[:57]
 	packet[53] = 254 // encrypted with S2K
 	packet[54] = 9   // AES-256
 	packet[55] = 3   // Iterated and Salted S2K
@@ -267,7 +210,7 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	packet = append(packet, salt...)
 	packet = append(packet, s2kCount)
 	packet = append(packet, iv...)
-	packet = append(packet, seckey...)
+	packet = append(packet, protected...)
 	packet[1] = byte(len(packet) - 2) // update packet length
 	return packet
 }
