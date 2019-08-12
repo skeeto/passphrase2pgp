@@ -31,6 +31,8 @@ func mpiDecode(buf []byte, desired int) (i, remain []byte) {
 	if bytes < desired {
 		i = make([]byte, desired)
 		copy(i[desired-bytes:], buf[2:2+bytes])
+	} else if 2+bytes > len(buf) {
+		return nil, nil
 	} else {
 		i = buf[2 : 2+bytes]
 	}
@@ -49,10 +51,9 @@ func checksum(mpi []byte) uint16 {
 
 // Packet represents a packet container.
 type Packet struct {
-	Tag     byte
-	HdrLen  int
-	BodyLen int
-	Body    []byte
+	Tag    byte
+	HdrLen int
+	Body   []byte
 }
 
 // ParsePacket returns the header of next packet in the buffer and the
@@ -64,6 +65,7 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 		return p, nil, InvalidPacketErr
 	}
 
+	var bodyLen int
 	if buf[0]&0x40 != 0 {
 		// New format
 		p.Tag = buf[0] & 0x3f
@@ -71,20 +73,20 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 		n0 := int(buf[1])
 		if n0 < 192 {
 			p.HdrLen = 2
-			p.BodyLen = n0
+			bodyLen = n0
 		} else if n0 == 0xff {
 			p.HdrLen = 6
 			if len(buf) < p.HdrLen {
 				return p, nil, InvalidPacketErr
 			}
-			p.BodyLen = int(binary.BigEndian.Uint32(buf[2:]))
+			bodyLen = int(binary.BigEndian.Uint32(buf[2:]))
 		} else {
 			p.HdrLen = 3
 			if len(buf) < p.HdrLen {
 				return p, nil, InvalidPacketErr
 			}
 			n1 := int(buf[2])
-			p.BodyLen = ((n0 - 192) << 8) + n1 + 192
+			bodyLen = ((n0 - 192) << 8) + n1 + 192
 		}
 
 	} else {
@@ -107,19 +109,19 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 		}
 		switch p.HdrLen {
 		case 2:
-			p.BodyLen = int(buf[1])
+			bodyLen = int(buf[1])
 		case 3:
-			p.BodyLen = int(binary.BigEndian.Uint16(buf[1:]))
+			bodyLen = int(binary.BigEndian.Uint16(buf[1:]))
 		case 5:
-			p.BodyLen = int(binary.BigEndian.Uint32(buf[1:]))
+			bodyLen = int(binary.BigEndian.Uint32(buf[1:]))
 		}
 	}
 
-	if len(buf) < p.HdrLen+p.BodyLen {
+	if len(buf) < p.HdrLen+bodyLen {
 		return p, nil, InvalidPacketErr
 	}
-	p.Body = buf[p.HdrLen : p.HdrLen+p.BodyLen]
-	return p, buf[p.HdrLen+p.BodyLen:], nil
+	p.Body = buf[p.HdrLen : p.HdrLen+bodyLen]
+	return p, buf[p.HdrLen+bodyLen:], nil
 }
 
 func (p *Packet) Encode() []byte {

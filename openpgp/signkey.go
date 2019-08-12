@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/binary"
 	"errors"
 	"hash"
@@ -31,6 +32,14 @@ const (
 
 	// Use GnuPG conventions instead of OpenPGP where they differ.
 	gnupgCompat = true
+)
+
+var (
+	// DecryptKeyErr indicates the wrong key was given.
+	DecryptKeyErr = errors.New("wrong encryption key")
+
+	// DecryptKeyErr indicates the wrong key was given.
+	UnsupportedPacketErr = errors.New("input packet unsupported")
 )
 
 // SignKey represents an Ed25519 sign key (EdDSA).
@@ -70,45 +79,85 @@ func (k *EncryptKey) SetExpires(time int64) {
 	k.expires = time
 }
 
-// Load entire key from OpenPGP input (Packet() output).
-func (k *SignKey) Load(r io.Reader) (err error) {
-	invalid := errors.New("invalid input")
+// Load key material from packet body. If the error is DecryptKeyErr,
+// then either the passphrase was nil or the passphrase is wrong. To use
+// an empty passphrase, pass an empty but non-nil passphrase.
+func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = invalid
+			err = InvalidPacketErr
 		}
 	}()
 
-	// Read entire packet from input
-	packet, err := readPacket(r)
-	if err != nil {
-		return err
-	}
-	if packet[0] != 0xc0|5 {
-		return invalid
+	switch packet.Tag {
+	case 5:
+		// Ok
+	case 6:
+		// TODO: Support loading public key packets
+		return UnsupportedPacketErr
+	default:
+		// Wrong packet type
+		return InvalidPacketErr
 	}
 
 	// Check various static bytes
-	if packet[2] != 0x04 || !bytes.Equal(packet[7:21], []byte{
+	body := packet.Body
+	if body[0] != 0x04 || !bytes.Equal(body[5:19], []byte{
 		22, 9,
 		0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
 		0x01, 0x07, 0x40,
-	}) || packet[53] != 0 {
-		return invalid
+	}) {
+		return UnsupportedPacketErr
 	}
 
-	// Extract the fields we care about
-	pubkey := packet[21:53]
-	seckey, tail := mpiDecode(packet[54:], 32)
-	created := int64(binary.BigEndian.Uint32(packet[3:]))
-	if len(tail) != 2 {
-		return invalid
-	}
-
+	pubkey := body[19:51]
+	var seckey []byte
+	created := int64(binary.BigEndian.Uint32(body[1:]))
 	k.SetCreated(created)
+
+	if body[51] == 0 {
+		// Unencrypted
+		var tail []byte
+		seckey, tail = mpiDecode(body[52:], 32)
+		if len(tail) != 2 {
+			return InvalidPacketErr
+		}
+	} else if body[51] == 254 {
+		// Encrypted
+		if passphrase == nil {
+			return DecryptKeyErr // missing passphrase
+		}
+
+		if body[52] != 9 || // AES-256
+			body[53] != 3 || // Iterated and Salted S2K
+			body[54] != 8 { // SHA-256
+			return UnsupportedPacketErr
+		}
+		salt := body[55:63]
+		count := decodeS2K(body[63])
+		iv := body[64:80]
+		data := body[80:]
+		key := s2k(passphrase, salt, count)
+
+		block, _ := aes.NewCipher(key)
+		stream := cipher.NewCFBDecrypter(block, iv)
+		stream.XORKeyStream(data, data)
+		var check []byte
+		seckey, check = mpiDecode(data, 32)
+		if seckey == nil {
+			return DecryptKeyErr
+		}
+
+		mac := sha1.New()
+		mac.Write(mpi(seckey))
+		if subtle.ConstantTimeCompare(mac.Sum(nil), check) == 0 {
+			return DecryptKeyErr
+		}
+	}
+
 	k.Seed(seckey)
 	if !bytes.Equal(k.Pubkey(), pubkey) {
-		return invalid
+		return InvalidPacketErr
 	}
 	return nil
 }
@@ -173,8 +222,7 @@ func decodeS2K(c byte) int {
 }
 
 // Compute a symmetric protection key via S2K.
-func s2k(passphrase, salt []byte) []byte {
-	count := decodeS2K(s2kCount)
+func s2k(passphrase, salt []byte, count int) []byte {
 	h := sha256.New()
 	if gnupgCompat {
 		// Due to an old bug, GnuPG's S2K subtly differs from OpenPGP
@@ -211,7 +259,7 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	iv := saltIV[8:]
 
 	// Compute symmetric protection key via S2K
-	key := s2k(passphrase, salt)
+	key := s2k(passphrase, salt, decodeS2K(s2kCount))
 
 	// Encrypt the secret key, with SHA-1 "MAC"
 	mpikey := mpi(k.Seckey())
@@ -223,11 +271,11 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	stream.XORKeyStream(seckey, seckey)
 
 	// Rewrite secret portion of packet
-	packet := k.Packet()[:55]
-	packet[53] = 254           // encrypted with S2K
-	packet[54] = 9             // AES-256
-	packet = append(packet, 3) // Iterated and Salted S2K
-	packet = append(packet, 8) // SHA-256
+	packet := k.Packet()[:57]
+	packet[53] = 254 // encrypted with S2K
+	packet[54] = 9   // AES-256
+	packet[55] = 3   // Iterated and Salted S2K
+	packet[56] = 8   // SHA-256
 	packet = append(packet, salt...)
 	packet = append(packet, s2kCount)
 	packet = append(packet, iv...)
@@ -327,13 +375,13 @@ func (k *SignKey) Certify(key, uid []byte, when int64) []byte {
 
 	prefix := []byte{0x99, 0, 0}
 	keypkt, _, _ := ParsePacket(key)
-	binary.BigEndian.PutUint16(prefix[1:], uint16(keypkt.BodyLen))
+	binary.BigEndian.PutUint16(prefix[1:], uint16(len(keypkt.Body)))
 	h.Write(prefix)
 	h.Write(keypkt.Body)
 
 	prefix = []byte{0xb4, 0, 0, 0, 0}
 	uidpkt, _, _ := ParsePacket(uid)
-	binary.BigEndian.PutUint32(prefix[1:], uint32(uidpkt.BodyLen))
+	binary.BigEndian.PutUint32(prefix[1:], uint32(len(uidpkt.Body)))
 	h.Write(prefix)
 	h.Write(uidpkt.Body)
 

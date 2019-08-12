@@ -30,6 +30,9 @@ func terminalPassphrase(repeat int) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if passphrase == nil {
+		passphrase = make([]byte, 0)
+	}
 	out.Write(tail)
 	for i := 0; i < repeat; i++ {
 		out.Write([]byte("passphrase (repeat): "))

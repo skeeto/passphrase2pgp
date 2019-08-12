@@ -1,10 +1,5 @@
 package openpgp
 
-import (
-	"errors"
-	"io"
-)
-
 // UserID represents a user identity. Implements Bindable.
 type UserID struct {
 	ID []byte
@@ -19,16 +14,11 @@ func (u *UserID) Packet() []byte {
 	return packet
 }
 
-// Load from OpenPGP input (Packet() output).
-func (u *UserID) Load(r io.Reader) (err error) {
-	packet, err := readPacket(r)
-	if err != nil {
-		return err
+// Load from packet.
+func (u *UserID) Load(packet Packet) (err error) {
+	if packet.Tag != 13 {
+		return InvalidPacketErr
 	}
-	if packet[0] != 0xc0|13 {
-		return errors.New("invalid input")
-	}
-
-	u.ID = packet[2:]
+	u.ID = packet.Body
 	return nil
 }

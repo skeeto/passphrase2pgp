@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"time"
@@ -407,16 +408,35 @@ func main() {
 
 	} else {
 		// Load key from previous output run
-		in, err := os.Open(config.load)
+		data, err := ioutil.ReadFile(config.load)
 		if err != nil {
 			fatal("%s", err)
 		}
-		defer in.Close()
-		bufin := bufio.NewReader(in)
-		if err := key.Load(bufin); err != nil {
+
+		packet, data, err := openpgp.ParsePacket(data)
+		if err != nil {
 			fatal("%s", err)
 		}
-		if err := userid.Load(bufin); err != nil {
+
+		if err := key.Load(packet, nil); err != nil {
+			if err != openpgp.DecryptKeyErr {
+				fatal("%s", err)
+			}
+			config.repeat = 0
+			config.passphrase, err = readPassphrase(config)
+			if err != nil {
+				fatal("%s", err)
+			}
+			if err := key.Load(packet, config.passphrase); err != nil {
+				fatal("%s", err)
+			}
+		}
+
+		packet, data, err = openpgp.ParsePacket(data)
+		if err != nil {
+			fatal("%s", err)
+		}
+		if err := userid.Load(packet); err != nil {
 			fatal("%s", err)
 		}
 		config.created = key.Created()
