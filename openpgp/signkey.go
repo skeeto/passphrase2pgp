@@ -177,11 +177,9 @@ func (k *SignKey) Packet() []byte {
 	packet := k.PubPacket()
 	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
 
-	// Secret Key
 	packet = append(packet, 0) // string-to-key, unencrypted
 	mpikey := mpi(k.Seckey())
 	packet = append(packet, mpikey...)
-	// Append checksum
 	packet = packet[:len(packet)+2]
 	binary.BigEndian.PutUint16(packet[len(packet)-2:], checksum(mpikey))
 
@@ -200,7 +198,7 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	key := s2k(passphrase, salt, decodeS2K(s2kCount))
 	protected := s2kEncrypt(key, iv, k.Seckey())
 
-	packet := k.PubPacket()[:57]
+	packet := k.PubPacket()[:SignKeyPubLen+4]
 	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
 
 	packet[53] = 254 // encrypted with S2K
@@ -211,7 +209,8 @@ func (k *SignKey) EncPacket(passphrase []byte) []byte {
 	packet = append(packet, s2kCount)
 	packet = append(packet, iv...)
 	packet = append(packet, protected...)
-	packet[1] = byte(len(packet) - 2) // update packet length
+
+	packet[1] = byte(len(packet) - 2) // packet length
 	return packet
 }
 

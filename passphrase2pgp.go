@@ -588,7 +588,11 @@ func (k *completeKey) outputPGP(config *config) {
 		buf.Write(userid.Packet())
 		buf.Write(key.SelfSign(userid, config.created, flags))
 		if config.subkey {
-			buf.Write(subkey.Packet())
+			if config.protect {
+				buf.Write(subkey.EncPacket(config.passphrase))
+			} else {
+				buf.Write(subkey.Packet())
+			}
 			buf.Write(key.Bind(subkey, config.created))
 		}
 	}
