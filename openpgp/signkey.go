@@ -3,6 +3,9 @@ package openpgp
 import (
 	"bufio"
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
@@ -22,6 +25,12 @@ const (
 	// FlagMDC indicates that the identity making a self-signature
 	// prefers to recieve a Modification Detection Code (MDC).
 	FlagMDC = iota
+
+	// Encoded S2K octet count.
+	s2kCount = 0xff // maximum strength
+
+	// Use GnuPG conventions instead of OpenPGP where they differ.
+	gnupgCompat = true
 )
 
 // SignKey represents an Ed25519 sign key (EdDSA).
@@ -156,6 +165,74 @@ func (k *SignKey) PubPacket() []byte {
 	packet[0] = 0xc0 | 6 // packet header, Public-Key packet (6)
 	packet[1] = SignKeyPubLen - 2
 	copy(packet[2:], k.Packet()[2:])
+	return packet
+}
+
+func decodeS2K(c byte) int {
+	return (16 + int(c&15)) << (uint(c>>4) + 6)
+}
+
+// Compute a symmetric protection key via S2K.
+func s2k(passphrase, salt []byte) []byte {
+	count := decodeS2K(s2kCount)
+	h := sha256.New()
+	if gnupgCompat {
+		// Due to an old bug, GnuPG's S2K subtly differs from OpenPGP
+		// making them incompatible. This branch implements the GnuPG
+		// verison.
+		// https://dev.gnupg.org/T4676
+		full := make([]byte, 8+len(passphrase))
+		copy(full[0:], salt)
+		copy(full[8:], passphrase)
+		iterations := count / len(full)
+		for i := 0; i < iterations; i++ {
+			h.Write(full)
+		}
+		tail := count - iterations*len(full)
+		h.Write(full[:tail])
+	} else {
+		// OpenPGP, incompatible with GnuPG
+		inlen := 8 + len(passphrase)
+		iterations := (count + inlen - 1) / inlen
+		for i := 0; i < iterations; i++ {
+			h.Write(salt)
+			h.Write(passphrase)
+		}
+	}
+	return h.Sum(nil)
+}
+
+func (k *SignKey) EncPacket(passphrase []byte) []byte {
+	var saltIV [24]byte
+	if _, err := rand.Read(saltIV[:]); err != nil {
+		panic(err) // should never happen
+	}
+	salt := saltIV[:8]
+	iv := saltIV[8:]
+
+	// Compute symmetric protection key via S2K
+	key := s2k(passphrase, salt)
+
+	// Encrypt the secret key, with SHA-1 "MAC"
+	mpikey := mpi(k.Seckey())
+	mac := sha1.New()
+	mac.Write(mpikey)
+	seckey := mac.Sum(mpikey)
+	block, _ := aes.NewCipher(key)
+	stream := cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(seckey, seckey)
+
+	// Rewrite secret portion of packet
+	packet := k.Packet()[:55]
+	packet[53] = 254           // encrypted with S2K
+	packet[54] = 9             // AES-256
+	packet = append(packet, 3) // Iterated and Salted S2K
+	packet = append(packet, 8) // SHA-256
+	packet = append(packet, salt...)
+	packet = append(packet, s2kCount)
+	packet = append(packet, iv...)
+	packet = append(packet, seckey...)
+	packet[1] = byte(len(packet) - 2) // update packet length
 	return packet
 }
 

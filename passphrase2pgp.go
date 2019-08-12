@@ -84,7 +84,7 @@ type config struct {
 
 	armor    bool
 	check    []byte
-	expires  int64
+	protect  bool
 	format   int
 	help     bool
 	input    string
@@ -96,6 +96,9 @@ type config struct {
 	created  int64
 	uid      string
 	verbose  bool
+	expires  int64
+
+	passphrase []byte
 }
 
 func usage(w io.Writer) {
@@ -107,8 +110,8 @@ func usage(w io.Writer) {
 		fmt.Fprintln(bw, s...)
 	}
 	f("Usage:")
-	f(i, p, "<-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]")
-	f(b, "-K [-anps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
+	f(i, p, "<-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]")
+	f(b, "-K [-aenps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
@@ -118,12 +121,13 @@ func usage(w io.Writer) {
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
+	f(i, "-e, --protect          protect private key with S2K")
 	f(i, "-f, --format pgp|ssh   select key format [pgp]")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")
 	f(i, "-l, --load FILE        load key from file instead of generating")
 	f(i, "-n, --now              use current time as creation date")
-	f(i, "-e, --pinentry[=CMD]   use pinentry to read the passphrase")
+	f(i, "--pinentry[=CMD]       use pinentry to read the passphrase")
 	f(i, "-p, --public           only output the public key")
 	f(i, "-r, --repeat N         number of repeated passphrase prompts")
 	f(i, "-s, --subkey           also output an encryption subkey")
@@ -148,13 +152,14 @@ func parse() *config {
 
 		{"armor", 'a', optparse.KindNone},
 		{"check", 'c', optparse.KindRequired},
+		{"protect", 'e', optparse.KindNone},
 		{"format", 'f', optparse.KindRequired},
 		{"help", 'h', optparse.KindNone},
 		{"input", 'i', optparse.KindRequired},
 		{"load", 'l', optparse.KindRequired},
 		{"now", 'n', optparse.KindNone},
 		{"public", 'p', optparse.KindNone},
-		{"pinentry", 'e', optparse.KindOptional},
+		{"pinentry", 0, optparse.KindOptional},
 		{"public", 'p', optparse.KindNone},
 		{"repeat", 'r', optparse.KindRequired},
 		{"subkey", 's', optparse.KindNone},
@@ -200,6 +205,8 @@ func parse() *config {
 				fatal("%s: %q", err, result.Optarg)
 			}
 			conf.check = check
+		case "protect":
+			conf.protect = true
 		case "format":
 			switch result.Optarg {
 			case "pgp":
@@ -374,12 +381,11 @@ func main() {
 		}
 
 		// Read the passphrase from the terminal
-		var passphrase []byte
 		var err error
 		if config.input != "" {
-			passphrase, err = firstLine(config.input)
+			config.passphrase, err = firstLine(config.input)
 		} else {
-			passphrase, err = readPassphrase(config)
+			config.passphrase, err = readPassphrase(config)
 		}
 		if err != nil {
 			fatal("%s", err)
@@ -387,7 +393,7 @@ func main() {
 
 		// Run KDF on passphrase
 		scale := 1
-		seed := kdf(passphrase, []byte(config.uid), scale)
+		seed := kdf(config.passphrase, []byte(config.uid), scale)
 
 		key.Seed(seed[:32])
 		key.SetCreated(config.created)
@@ -400,7 +406,7 @@ func main() {
 		}
 
 	} else {
-		// Load passphrase from the first line of a file
+		// Load key from previous output run
 		in, err := os.Open(config.load)
 		if err != nil {
 			fatal("%s", err)
@@ -554,7 +560,11 @@ func (k *completeKey) outputPGP(config *config) {
 			buf.Write(key.Bind(subkey, config.created))
 		}
 	} else {
-		buf.Write(key.Packet())
+		if config.protect {
+			buf.Write(key.EncPacket(config.passphrase))
+		} else {
+			buf.Write(key.Packet())
+		}
 		buf.Write(userid.Packet())
 		buf.Write(key.SelfSign(userid, config.created, flags))
 		if config.subkey {

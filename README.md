@@ -63,8 +63,8 @@ Use `--help` (`-h`) for a full option listing:
 
 ```
 Usage:
-   passphrase2pgp <-u id|-l key> [-hv] [-c id] [-e[cmd]] [-i pwfile]
-       -K [-anps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
+   passphrase2pgp <-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]
+       -K [-aenps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
 Commands:
@@ -74,12 +74,13 @@ Commands:
 Options:
    -a, --armor            encode output in ASCII armor
    -c, --check KEYID      require last Key ID bytes to match
+   -e, --protect          protect private key with S2K
    -f, --format pgp|ssh   select key format [pgp]
    -h, --help             print this help message
    -i, --input FILE       read passphrase from file
    -l, --load FILE        load key from file instead of generating
    -n, --now              use current time as creation date
-   -e, --pinentry[=CMD]   use pinentry to read the passphrase
+   --pinentry[=CMD]       use pinentry to read the passphrase
    -p, --public           only output the public key
    -r, --repeat N         number of repeated passphrase prompts
    -s, --subkey           also output an encryption subkey
@@ -129,11 +130,30 @@ incorrect (earlier) date.
 [t4669]: https://dev.gnupg.org/T4669
 [t4670]: https://dev.gnupg.org/T4670
 
+The `--protect` option uses OpenPGP's S2K feature to encrypt the private
+key in the exported format. Rather than prompt for a new passphrase,
+passphrase2pgp will reuse your derivation passphrase as the protection
+passphrase. However, keep in mind that the S2K algorithm is *much*
+weaker than the algorithm used to derive the asymmetric key, Argon2id.
+
+Important note: [**GnuPG's S2K was implemented incorrectly and is
+incompatible with OpenPGP**][t4676]. Since this defect went practically
+unnoticed for literally two decades, GnuPG's algorithm has become the de
+facto standard. As a result, passphrase2pgp uses GnuPG's S2K algorithm,
+not the OpenPGP standard, since compatibility with GnuPG is more useful.
+
+[t4676]: https://dev.gnupg.org/T4676
+
 ### Examples
 
-Generate a private key and send it to GnuPG:
+Generate a private key and send it to GnuPG (with no protection passphrase):
 
     $ passphrase2pgp --uid "..." | gnupg --import
+
+Or, with `--protect`, reuse the derivation passphrase as a protection
+passphrase so that the key is encrypted on the GnuPG keyring:
+
+    $ passphrase2pgp --protect --uid "..." | gnupg --import
 
 Create an armored public key for publishing and sharing:
 
@@ -185,12 +205,6 @@ your own signatures:
     $ gpgv document.txt.sig document.txt
 
 ### Interacting with GnuPG
-
-Once your key is generated, you may want to secure it with a protection
-passphrase on your GnuPG keyring in order to protect it at rest:
-
-    $ gpg --edit-key "Real Name"
-    gpg> passwd
 
 Trust is stored external to keys, so imported keys are always initially
 untrusted. You will likely want to mark your newly-imported primary key
