@@ -42,13 +42,13 @@ func (k *EncryptKey) SetCreated(time int64) {
 	k.created = time
 }
 
-// Expired returns the key's expiration time in unix epoch seconds. A
+// Expires returns the key's expiration time in unix epoch seconds. A
 // value of zero means the key doesn't expire.
 func (k *SignKey) Expires() int64 {
 	return k.expires
 }
 
-// SetExpire returns the key's expiration time in unix epoch seconds. A
+// SetExpires returns the key's expiration time in unix epoch seconds. A
 // value of zero means the key doesn't expire.
 func (k *SignKey) SetExpires(time int64) {
 	k.expires = time
@@ -122,7 +122,7 @@ func (k *EncryptKey) EncPacket(passphrase []byte) []byte {
 func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = InvalidPacketErr
+			err = ErrInvalidPacket
 		}
 	}()
 
@@ -131,10 +131,10 @@ func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
 		// Ok
 	case 14:
 		// TODO: Support loading public key packets
-		return UnsupportedPacketErr
+		return ErrUnsupportedPacket
 	default:
 		// Wrong packet type
-		return InvalidPacketErr
+		return ErrInvalidPacket
 	}
 
 	// Check various static bytes
@@ -143,7 +143,7 @@ func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
 		18, 10,
 		0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
 	}) {
-		return UnsupportedPacketErr
+		return ErrUnsupportedPacket
 	}
 
 	pubkey := body[20:52]
@@ -159,7 +159,7 @@ func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
 
 	k.Seed(reverse(seckey))
 	if !bytes.Equal(k.Pubkey(), pubkey) {
-		return InvalidPacketErr
+		return ErrInvalidPacket
 	}
 	return nil
 }

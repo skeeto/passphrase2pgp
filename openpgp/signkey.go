@@ -25,11 +25,12 @@ const (
 )
 
 var (
-	// DecryptKeyErr indicates the wrong key was given.
-	DecryptKeyErr = errors.New("wrong encryption key")
+	// ErrDecryptKey indicates the wrong key was given.
+	ErrDecryptKey = errors.New("wrong encryption key")
 
-	// DecryptKeyErr indicates the wrong key was given.
-	UnsupportedPacketErr = errors.New("input packet unsupported")
+	// ErrUnsupportedPacket indicates the packet uses unsupported
+	// features.
+	ErrUnsupportedPacket = errors.New("input packet unsupported")
 )
 
 // SignKey represents an Ed25519 sign key (EdDSA).
@@ -54,13 +55,13 @@ func (k *SignKey) SetCreated(time int64) {
 	k.created = time
 }
 
-// Expired returns the key's expiration time in unix epoch seconds. A
+// Expires returns the key's expiration time in unix epoch seconds. A
 // value of zero means the key doesn't expire.
 func (k *EncryptKey) Expires() int64 {
 	return k.expires
 }
 
-// SetExpire returns the key's expiration time in unix epoch seconds. A
+// SetExpires returns the key's expiration time in unix epoch seconds. A
 // value of zero means the key doesn't expire.
 func (k *EncryptKey) SetExpires(time int64) {
 	k.expires = time
@@ -72,7 +73,7 @@ func (k *EncryptKey) SetExpires(time int64) {
 func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 	defer func() {
 		if recover() != nil {
-			err = InvalidPacketErr
+			err = ErrInvalidPacket
 		}
 	}()
 
@@ -81,10 +82,10 @@ func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 		// Ok
 	case 6:
 		// TODO: Support loading public key packets
-		return UnsupportedPacketErr
+		return ErrUnsupportedPacket
 	default:
 		// Wrong packet type
-		return InvalidPacketErr
+		return ErrInvalidPacket
 	}
 
 	// Check various static bytes
@@ -94,7 +95,7 @@ func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 		0x2b, 0x06, 0x01, 0x04, 0x01, 0xda, 0x47, 0x0f, 0x01,
 		0x01, 0x07, 0x40,
 	}) {
-		return UnsupportedPacketErr
+		return ErrUnsupportedPacket
 	}
 
 	pubkey := body[19:51]
@@ -108,7 +109,7 @@ func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 
 	k.Seed(seckey)
 	if !bytes.Equal(k.Pubkey(), pubkey) {
-		return InvalidPacketErr
+		return ErrInvalidPacket
 	}
 	return nil
 }
@@ -208,6 +209,7 @@ func (k *SignKey) Bind(subkey *EncryptKey, when int64) []byte {
 	return k.sign(sigInput{h, sigtype, when, subpackets})
 }
 
+// SelfSign returns a self-signature packer over a user ID.
 func (k *SignKey) SelfSign(userid *UserID, when int64, flags int) []byte {
 	const sigtype = 0x13 // Positive certification
 	h := sha256.New()

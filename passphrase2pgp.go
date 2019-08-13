@@ -425,7 +425,7 @@ func main() {
 		config.created = time.Now().Unix()
 
 		if err := key.Load(packets[0], nil); err != nil {
-			if err != openpgp.DecryptKeyErr {
+			if err != openpgp.ErrDecryptKey {
 				fatal("%s", err)
 			}
 			config.repeat = 0

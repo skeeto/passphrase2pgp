@@ -1,3 +1,8 @@
+// Package openpgp is a high-level API for creating keys and signatures
+// within a very narrow part of the OpenPGP standard. Only a small set
+// of cryptographic primitives is supported, such as only Curve25519 and
+// not RSA. It's primarily for producing OpenPGP output, not consuming
+// arbitrary OpenPGP input.
 package openpgp
 
 import (
@@ -7,7 +12,8 @@ import (
 	"math/bits"
 )
 
-var InvalidPacketErr = errors.New("invalid OpenPGP data")
+// ErrInvalidPacket means a packet is inconsistent or contains invalid data.
+var ErrInvalidPacket= errors.New("invalid OpenPGP data")
 
 // Returns data encoded as an OpenPGP multiprecision integer.
 func mpi(data []byte) []byte {
@@ -62,7 +68,7 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 	var p Packet
 
 	if len(buf) < 2 || buf[0]&0x80 == 0 {
-		return p, nil, InvalidPacketErr
+		return p, nil, ErrInvalidPacket
 	}
 
 	var bodyLen int
@@ -77,13 +83,13 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 		} else if n0 == 0xff {
 			p.HdrLen = 6
 			if len(buf) < p.HdrLen {
-				return p, nil, InvalidPacketErr
+				return p, nil, ErrInvalidPacket
 			}
 			bodyLen = int(binary.BigEndian.Uint32(buf[2:]))
 		} else {
 			p.HdrLen = 3
 			if len(buf) < p.HdrLen {
-				return p, nil, InvalidPacketErr
+				return p, nil, ErrInvalidPacket
 			}
 			n1 := int(buf[2])
 			bodyLen = ((n0 - 192) << 8) + n1 + 192
@@ -101,11 +107,11 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 		case 2:
 			p.HdrLen = 5
 		case 3:
-			return p, nil, InvalidPacketErr // don't bother
+			return p, nil, ErrInvalidPacket // don't bother
 		}
 
 		if len(buf) < p.HdrLen {
-			return p, nil, InvalidPacketErr
+			return p, nil, ErrInvalidPacket
 		}
 		switch p.HdrLen {
 		case 2:
@@ -118,12 +124,13 @@ func ParsePacket(buf []byte) (Packet, []byte, error) {
 	}
 
 	if len(buf) < p.HdrLen+bodyLen {
-		return p, nil, InvalidPacketErr
+		return p, nil, ErrInvalidPacket
 	}
 	p.Body = buf[p.HdrLen : p.HdrLen+bodyLen]
 	return p, buf[p.HdrLen+bodyLen:], nil
 }
 
+// Encode returns an encoded version of this packet.
 func (p *Packet) Encode() []byte {
 	n := len(p.Body)
 	if n <= 191 {

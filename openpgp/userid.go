@@ -17,7 +17,7 @@ func (u *UserID) Packet() []byte {
 // Load from packet.
 func (u *UserID) Load(packet Packet) (err error) {
 	if packet.Tag != 13 {
-		return InvalidPacketErr
+		return ErrInvalidPacket
 	}
 	u.ID = packet.Body
 	return nil

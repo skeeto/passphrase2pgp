@@ -70,6 +70,9 @@ func s2kDecrypt(key, iv, protected []byte) ([]byte, bool) {
 	return seckey, true
 }
 
+// Encrypts an entire secret key, with output suitable for appending to
+// a public key packet to turn it into a secret key packet. Output is
+// appended to the given packet and returned.
 func s2kEncryptKey(packet, seckey, passphrase []byte) []byte {
 	var saltIV [24]byte
 	if _, err := rand.Read(saltIV[:]); err != nil {
@@ -91,29 +94,30 @@ func s2kEncryptKey(packet, seckey, passphrase []byte) []byte {
 	return packet
 }
 
+// Decrypts the secret key portion from a secret key packet.
 func s2kDecryptKey(body, passphrase []byte) ([]byte, error) {
 	if body[0] == 0 {
 		// Unencrypted
 		seckey, tail := mpiDecode(body[1:], 32)
 		if len(tail) != 2 {
-			return nil, InvalidPacketErr
+			return nil, ErrInvalidPacket
 		}
 		crcA := binary.BigEndian.Uint16(tail)
 		crcB := checksum(body[1 : len(body)-2])
 		if crcA != crcB {
-			return nil, InvalidPacketErr
+			return nil, ErrInvalidPacket
 		}
 		return seckey, nil
 
 	} else if body[0] == 254 {
 		// Encrypted
 		if passphrase == nil {
-			return nil, DecryptKeyErr
+			return nil, ErrDecryptKey
 		}
 		if body[1] != 9 || // AES-256
 			body[2] != 3 || // Iterated and Salted S2K
 			body[3] != 8 { // SHA-256
-			return nil, UnsupportedPacketErr
+			return nil, ErrUnsupportedPacket
 		}
 
 		salt := body[4:12]
@@ -124,11 +128,11 @@ func s2kDecryptKey(body, passphrase []byte) ([]byte, error) {
 		key := s2k(passphrase, salt, count)
 		seckey, ok := s2kDecrypt(key, iv, data)
 		if !ok {
-			return nil, DecryptKeyErr
+			return nil, ErrDecryptKey
 		}
 		return seckey, nil
 
 	} else {
-		return nil, UnsupportedPacketErr
+		return nil, ErrUnsupportedPacket
 	}
 }
