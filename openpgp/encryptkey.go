@@ -1,6 +1,7 @@
 package openpgp
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 
@@ -83,10 +84,10 @@ func (k *EncryptKey) PubPacket() []byte {
 	copy(packet[22:54], k.Pubkey())
 
 	// KDF parameters
-	packet[54] = 3    // length
-	packet[55] = 0x01 // reserved (1)
-	packet[56] = 0x08 // SHA-256
-	packet[57] = 0x07 // AES-128? (spec is incorrect)
+	packet[54] = 3 // length
+	packet[55] = 1 // reserved (1)
+	packet[56] = 8 // SHA-256
+	packet[57] = 9 // AES-256
 
 	packet[1] = byte(len(packet) - 2) // packet length
 	return packet
@@ -132,6 +133,81 @@ func (k *EncryptKey) EncPacket(passphrase []byte) []byte {
 
 	packet[1] = byte(len(packet) - 2) // packet length
 	return packet
+}
+
+// Load key material from packet body. If the error is DecryptKeyErr,
+// then either the passphrase was nil or the passphrase is wrong. To use
+// an empty passphrase, pass an empty but non-nil passphrase.
+func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = InvalidPacketErr
+		}
+	}()
+
+	switch packet.Tag {
+	case 7:
+		// Ok
+	case 14:
+		// TODO: Support loading public key packets
+		return UnsupportedPacketErr
+	default:
+		// Wrong packet type
+		return InvalidPacketErr
+	}
+
+	// Check various static bytes
+	body := packet.Body
+	if body[0] != 0x04 || !bytes.Equal(body[5:17], []byte{
+		18, 10,
+		0x2b, 0x06, 0x01, 0x04, 0x01, 0x97, 0x55, 0x01, 0x05, 0x01,
+	}) {
+		return UnsupportedPacketErr
+	}
+
+	pubkey := body[20:52]
+	created := int64(binary.BigEndian.Uint32(body[1:]))
+	k.SetCreated(created)
+
+	// KDF parameters
+	secbody := body[53+body[52]:] // skip KDF parameters
+
+	var seckey []byte
+	if secbody[0] == 0 {
+		// Unencrypted
+		var tail []byte
+		seckey, tail = mpiDecode(secbody[1:], 32)
+		if len(tail) != 2 {
+			return InvalidPacketErr
+		}
+	} else if secbody[0] == 254 {
+		// Encrypted
+		if passphrase == nil {
+			return DecryptKeyErr // missing passphrase
+		}
+
+		if secbody[1] != 9 || // AES-256
+			secbody[2] != 3 || // Iterated and Salted S2K
+			secbody[3] != 8 { // SHA-256
+			return UnsupportedPacketErr
+		}
+		salt := secbody[4:12]
+		count := decodeS2K(secbody[12])
+		iv := secbody[13:29]
+		data := secbody[29:]
+		key := s2k(passphrase, salt, count)
+		var ok bool
+		seckey, ok = s2kDecrypt(key, iv, data)
+		if !ok {
+			return DecryptKeyErr
+		}
+	}
+
+	k.Seed(reverse(seckey))
+	if !bytes.Equal(k.Pubkey(), pubkey) {
+		return InvalidPacketErr
+	}
+	return nil
 }
 
 // Returns a reversed copy of its input.

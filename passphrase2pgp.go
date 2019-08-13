@@ -172,6 +172,7 @@ func parse() *config {
 
 	var repeatSeen bool
 	var uidSeen bool
+	var timeSeen bool
 
 	args := os.Args
 	if len(args) == 4 && args[1] == "--status-fd=2" && args[2] == "-bsau" {
@@ -226,6 +227,7 @@ func parse() *config {
 			conf.load = result.Optarg
 		case "now":
 			conf.created = time.Now().Unix()
+			timeSeen = true
 		case "pinentry":
 			if result.Optarg != "" {
 				conf.pinentry = result.Optarg
@@ -249,6 +251,7 @@ func parse() *config {
 				fatal("--time (-t): %s", err)
 			}
 			conf.created = int64(time)
+			timeSeen = true
 		case "uid":
 			conf.uid = result.Optarg
 			if len(conf.uid) > 255 {
@@ -277,6 +280,10 @@ func parse() *config {
 		if conf.uid == "" {
 			fatal("--uid or --load required (or $REALNAME and $EMAIL)")
 		}
+	}
+
+	if conf.load != "" && !timeSeen {
+		conf.created = time.Now().Unix()
 	}
 
 	if conf.check == nil {
@@ -407,18 +414,17 @@ func main() {
 		}
 
 	} else {
-		// Load key from previous output run
-		data, err := ioutil.ReadFile(config.load)
+		// Load keys from previous output
+		packets, err := parsePackets(config.load)
 		if err != nil {
 			fatal("%s", err)
 		}
-
-		packet, data, err := openpgp.ParsePacket(data)
-		if err != nil {
-			fatal("%s", err)
+		if len(packets) < 3 {
+			fatal("invalid input (too few packets)")
 		}
+		config.created = time.Now().Unix()
 
-		if err := key.Load(packet, nil); err != nil {
+		if err := key.Load(packets[0], nil); err != nil {
 			if err != openpgp.DecryptKeyErr {
 				fatal("%s", err)
 			}
@@ -427,22 +433,25 @@ func main() {
 			if err != nil {
 				fatal("%s", err)
 			}
-			if err := key.Load(packet, config.passphrase); err != nil {
+			if err := key.Load(packets[0], config.passphrase); err != nil {
 				fatal("%s", err)
 			}
 		}
 
-		packet, data, err = openpgp.ParsePacket(data)
-		if err != nil {
+		if err := userid.Load(packets[1]); err != nil {
 			fatal("%s", err)
 		}
-		if err := userid.Load(packet); err != nil {
-			fatal("%s", err)
-		}
-		config.created = key.Created()
-
 		if config.verbose {
 			fmt.Fprintf(os.Stderr, "User ID: %s\n", userid.ID)
+		}
+
+		config.subkey = false
+		if len(packets) >= 5 {
+			passphrase := config.passphrase
+			if err := subkey.Load(packets[3], passphrase); err != nil {
+				fatal("%s", err)
+			}
+			config.subkey = true
 		}
 	}
 
@@ -686,4 +695,23 @@ func (k *completeKey) outputSSH(config *config) {
 	if _, err := os.Stdout.Write(pub.Bytes()); err != nil {
 		fatal("%s", err)
 	}
+}
+
+func parsePackets(filename string) ([]openpgp.Packet, error) {
+	data, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+
+	var packets []openpgp.Packet
+	for len(data) > 0 {
+		var err error
+		var packet openpgp.Packet
+		packet, data, err = openpgp.ParsePacket(data)
+		if err != nil {
+			return nil, err
+		}
+		packets = append(packets, packet)
+	}
+	return packets, nil
 }
