@@ -3,9 +3,11 @@ package openpgp
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/binary"
 )
 
 const (
@@ -66,4 +68,67 @@ func s2kDecrypt(key, iv, protected []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return seckey, true
+}
+
+func s2kEncryptKey(packet, seckey, passphrase []byte) []byte {
+	var saltIV [24]byte
+	if _, err := rand.Read(saltIV[:]); err != nil {
+		panic(err) // should never happen
+	}
+	salt := saltIV[:8]
+	iv := saltIV[8:]
+	key := s2k(passphrase, salt, decodeS2K(s2kCount))
+	protected := s2kEncrypt(key, iv, seckey)
+
+	packet = append(packet, 254) // encrypted with S2K
+	packet = append(packet, 9)   // AES-256
+	packet = append(packet, 3)   // Iterated and Salted S2K
+	packet = append(packet, 8)   // SHA-256
+	packet = append(packet, salt...)
+	packet = append(packet, s2kCount)
+	packet = append(packet, iv...)
+	packet = append(packet, protected...)
+	return packet
+}
+
+func s2kDecryptKey(body, passphrase []byte) ([]byte, error) {
+	if body[0] == 0 {
+		// Unencrypted
+		seckey, tail := mpiDecode(body[1:], 32)
+		if len(tail) != 2 {
+			return nil, InvalidPacketErr
+		}
+		crcA := binary.BigEndian.Uint16(tail)
+		crcB := checksum(body[1 : len(body)-2])
+		if crcA != crcB {
+			return nil, InvalidPacketErr
+		}
+		return seckey, nil
+
+	} else if body[0] == 254 {
+		// Encrypted
+		if passphrase == nil {
+			return nil, DecryptKeyErr
+		}
+		if body[1] != 9 || // AES-256
+			body[2] != 3 || // Iterated and Salted S2K
+			body[3] != 8 { // SHA-256
+			return nil, UnsupportedPacketErr
+		}
+
+		salt := body[4:12]
+		count := decodeS2K(body[12])
+		iv := body[13:29]
+		data := body[29:]
+
+		key := s2k(passphrase, salt, count)
+		seckey, ok := s2kDecrypt(key, iv, data)
+		if !ok {
+			return nil, DecryptKeyErr
+		}
+		return seckey, nil
+
+	} else {
+		return nil, UnsupportedPacketErr
+	}
 }

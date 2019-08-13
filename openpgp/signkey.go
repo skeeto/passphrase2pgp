@@ -3,7 +3,6 @@ package openpgp
 import (
 	"bufio"
 	"bytes"
-	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
@@ -99,38 +98,12 @@ func (k *SignKey) Load(packet Packet, passphrase []byte) (err error) {
 	}
 
 	pubkey := body[19:51]
-	var seckey []byte
 	created := int64(binary.BigEndian.Uint32(body[1:]))
 	k.SetCreated(created)
 
-	if body[51] == 0 {
-		// Unencrypted
-		var tail []byte
-		seckey, tail = mpiDecode(body[52:], 32)
-		if len(tail) != 2 {
-			return InvalidPacketErr
-		}
-	} else if body[51] == 254 {
-		// Encrypted
-		if passphrase == nil {
-			return DecryptKeyErr // missing passphrase
-		}
-
-		if body[52] != 9 || // AES-256
-			body[53] != 3 || // Iterated and Salted S2K
-			body[54] != 8 { // SHA-256
-			return UnsupportedPacketErr
-		}
-		salt := body[55:63]
-		count := decodeS2K(body[63])
-		iv := body[64:80]
-		data := body[80:]
-		key := s2k(passphrase, salt, count)
-		var ok bool
-		seckey, ok = s2kDecrypt(key, iv, data)
-		if !ok {
-			return DecryptKeyErr
-		}
+	seckey, err := s2kDecryptKey(body[51:], passphrase)
+	if err != nil {
+		return err
 	}
 
 	k.Seed(seckey)
@@ -189,27 +162,9 @@ func (k *SignKey) Packet() []byte {
 
 // EncPacket returns a protected secret key packet.
 func (k *SignKey) EncPacket(passphrase []byte) []byte {
-	var saltIV [24]byte
-	if _, err := rand.Read(saltIV[:]); err != nil {
-		panic(err) // should never happen
-	}
-	salt := saltIV[:8]
-	iv := saltIV[8:]
-	key := s2k(passphrase, salt, decodeS2K(s2kCount))
-	protected := s2kEncrypt(key, iv, k.Seckey())
-
-	packet := k.PubPacket()[:SignKeyPubLen+4]
+	packet := k.PubPacket()
 	packet[0] = 0xc0 | 5 // packet header, Secret-Key Packet (5)
-
-	packet[53] = 254 // encrypted with S2K
-	packet[54] = 9   // AES-256
-	packet[55] = 3   // Iterated and Salted S2K
-	packet[56] = 8   // SHA-256
-	packet = append(packet, salt...)
-	packet = append(packet, s2kCount)
-	packet = append(packet, iv...)
-	packet = append(packet, protected...)
-
+	packet = s2kEncryptKey(packet, k.Seckey(), passphrase)
 	packet[1] = byte(len(packet) - 2) // packet length
 	return packet
 }

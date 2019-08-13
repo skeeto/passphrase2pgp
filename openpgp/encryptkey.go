@@ -2,7 +2,6 @@ package openpgp
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/binary"
 
 	"golang.org/x/crypto/curve25519"
@@ -110,27 +109,9 @@ func (k *EncryptKey) Packet() []byte {
 
 // EncPacket returns a protected secret key packet.
 func (k *EncryptKey) EncPacket(passphrase []byte) []byte {
-	var saltIV [24]byte
-	if _, err := rand.Read(saltIV[:]); err != nil {
-		panic(err) // should never happen
-	}
-	salt := saltIV[:8]
-	iv := saltIV[8:]
-	key := s2k(passphrase, salt, decodeS2K(s2kCount))
-	protected := s2kEncrypt(key, iv, reverse(k.Seckey()))
-
-	packet := k.PubPacket()[:EncryptKeyPubLen+4]
+	packet := k.PubPacket()
 	packet[0] = 0xc0 | 7 // packet header, Secret-Subkey Packet (7)
-
-	packet[58] = 254 // encrypted with S2K
-	packet[59] = 9   // AES-256
-	packet[60] = 3   // Iterated and Salted S2K
-	packet[61] = 8   // SHA-256
-	packet = append(packet, salt...)
-	packet = append(packet, s2kCount)
-	packet = append(packet, iv...)
-	packet = append(packet, protected...)
-
+	packet = s2kEncryptKey(packet, reverse(k.Seckey()), passphrase)
 	packet[1] = byte(len(packet) - 2) // packet length
 	return packet
 }
@@ -171,36 +152,9 @@ func (k *EncryptKey) Load(packet Packet, passphrase []byte) (err error) {
 
 	// KDF parameters
 	secbody := body[53+body[52]:] // skip KDF parameters
-
-	var seckey []byte
-	if secbody[0] == 0 {
-		// Unencrypted
-		var tail []byte
-		seckey, tail = mpiDecode(secbody[1:], 32)
-		if len(tail) != 2 {
-			return InvalidPacketErr
-		}
-	} else if secbody[0] == 254 {
-		// Encrypted
-		if passphrase == nil {
-			return DecryptKeyErr // missing passphrase
-		}
-
-		if secbody[1] != 9 || // AES-256
-			secbody[2] != 3 || // Iterated and Salted S2K
-			secbody[3] != 8 { // SHA-256
-			return UnsupportedPacketErr
-		}
-		salt := secbody[4:12]
-		count := decodeS2K(secbody[12])
-		iv := secbody[13:29]
-		data := secbody[29:]
-		key := s2k(passphrase, salt, count)
-		var ok bool
-		seckey, ok = s2kDecrypt(key, iv, data)
-		if !ok {
-			return DecryptKeyErr
-		}
+	seckey, err := s2kDecryptKey(secbody, passphrase)
+	if err != nil {
+		return err
 	}
 
 	k.Seed(reverse(seckey))
