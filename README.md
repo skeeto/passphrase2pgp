@@ -136,14 +136,6 @@ passphrase2pgp will reuse your derivation passphrase as the protection
 passphrase. However, keep in mind that the S2K algorithm is *much*
 weaker than the algorithm used to derive the asymmetric key, Argon2id.
 
-Note: There's [**a bug that prevents GnuPG from using imported protected
-subkeys**][t4670]. Output from `--protect` with `--subkey` will be
-imported successfully by GnuPG, but the subkey will be unusable unless
-you remove the passphrase (via `--edit-key`). This problem isn't limited
-to passphrase2pgp: GnuPG cannot use its own imported protected subkeys.
-
-[t4677]: https://dev.gnupg.org/T4677
-
 ### Examples
 
 Generate a private key and send it to GnuPG (with no protection passphrase):
