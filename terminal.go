@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"syscall"
@@ -11,7 +12,7 @@ import (
 )
 
 // Read, confirm, and return a passphrase from the user via terminal.
-func terminalPassphrase(repeat int) ([]byte, error) {
+func terminalPassphrase(hint string, repeat int) ([]byte, error) {
 	fd := int(syscall.Stdin)
 	var out io.Writer = os.Stderr
 	if !terminal.IsTerminal(fd) {
@@ -24,8 +25,17 @@ func terminalPassphrase(repeat int) ([]byte, error) {
 		out = tty
 	}
 
+	var prompt, promptRepeat string
+	if hint == "" {
+		prompt = "passphrase: "
+		promptRepeat = "passphrase (repeat): "
+	} else {
+		prompt = fmt.Sprintf("passphrase [%s]: ", hint)
+		promptRepeat = fmt.Sprintf("passphrase [%s] (repeat): ", hint)
+	}
+
 	tail := []byte("\n")
-	out.Write([]byte("passphrase: "))
+	out.Write([]byte(prompt))
 	passphrase, err := terminal.ReadPassword(fd)
 	if err != nil {
 		return nil, err
@@ -35,7 +45,7 @@ func terminalPassphrase(repeat int) ([]byte, error) {
 	}
 	out.Write(tail)
 	for i := 0; i < repeat; i++ {
-		out.Write([]byte("passphrase (repeat): "))
+		out.Write([]byte(promptRepeat))
 		again, err := terminal.ReadPassword(fd)
 		if err != nil {
 			return nil, err

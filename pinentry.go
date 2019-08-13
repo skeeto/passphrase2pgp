@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
@@ -146,11 +147,16 @@ func pinentryDecode(s string) (decoded []byte, valid bool) {
 }
 
 // Read, confirm, and return a passphrase from the user via pinentry.
-func pinentryPassphrase(command string, repeat int) ([]byte, error) {
+func pinentryPassphrase(command, hint string, repeat int) ([]byte, error) {
 	pe := runPinentry(command)
 	defer pe.Close()
-	pe.Send("SETDESC", "passphrase2pgp")
-	pe.Send("SETTITLE", "passphrase2pgp")
+	if hint == "" {
+		pe.Send("SETDESC", "passphrase2pgp")
+		pe.Send("SETTITLE", "passphrase2pgp")
+	} else {
+		pe.Send("SETDESC", fmt.Sprintf("passphrase2pgp [%s]", hint))
+		pe.Send("SETTITLE", fmt.Sprintf("passphrase2pgp [%s]", hint))
+	}
 	passphrase := pe.Send("GETPIN")
 	for i := 0; i < repeat; i++ {
 		again := pe.Send("GETPIN")

@@ -45,11 +45,11 @@ func fatal(format string, args ...interface{}) {
 }
 
 // Read and confirm the passphrase per the user's preference.
-func readPassphrase(config *config) ([]byte, error) {
-	if config.pinentry != "" {
-		return pinentryPassphrase(config.pinentry, config.repeat)
+func readPassphrase(pinentry, hint string, repeat int) ([]byte, error) {
+	if pinentry != "" {
+		return pinentryPassphrase(pinentry, hint, repeat)
 	}
-	return terminalPassphrase(config.repeat)
+	return terminalPassphrase(hint, repeat)
 }
 
 // Returns the first line of a file not including \r or \n. Does not
@@ -99,7 +99,9 @@ type config struct {
 	verbose  bool
 	expires  int64
 
-	passphrase []byte
+	passphrase      []byte
+	protectPassword []byte
+	protectQuery    int
 }
 
 func usage(w io.Writer) {
@@ -112,7 +114,7 @@ func usage(w io.Writer) {
 	}
 	f("Usage:")
 	f(i, p, "<-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]")
-	f(b, "-K [-aenps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
+	f(b, "-K [-anps] [-e[n]] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
@@ -122,7 +124,7 @@ func usage(w io.Writer) {
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
-	f(i, "-e, --protect          protect private key with S2K")
+	f(i, "-e, --protect[=COUNT]  protect private key with S2K")
 	f(i, "-f, --format pgp|ssh   select key format [pgp]")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")
@@ -153,7 +155,7 @@ func parse() *config {
 
 		{"armor", 'a', optparse.KindNone},
 		{"check", 'c', optparse.KindRequired},
-		{"protect", 'e', optparse.KindNone},
+		{"protect", 'e', optparse.KindOptional},
 		{"format", 'f', optparse.KindRequired},
 		{"help", 'h', optparse.KindNone},
 		{"input", 'i', optparse.KindRequired},
@@ -209,6 +211,13 @@ func parse() *config {
 			conf.check = check
 		case "protect":
 			conf.protect = true
+			if result.Optarg != "" {
+				repeat, err := strconv.Atoi(result.Optarg)
+				if err != nil {
+					fatal("--protect (-e): %s", err)
+				}
+				conf.protectQuery = repeat
+			}
 		case "format":
 			switch result.Optarg {
 			case "pgp":
@@ -393,7 +402,9 @@ func main() {
 		if config.input != "" {
 			config.passphrase, err = firstLine(config.input)
 		} else {
-			config.passphrase, err = readPassphrase(config)
+			pinentry := config.pinentry
+			repeat := config.repeat
+			config.passphrase, err = readPassphrase(pinentry, "", repeat)
 		}
 		if err != nil {
 			fatal("%s", err)
@@ -428,12 +439,14 @@ func main() {
 			if err != openpgp.ErrDecryptKey {
 				fatal("%s", err)
 			}
-			config.repeat = 0
-			config.passphrase, err = readPassphrase(config)
+			pinentry := config.pinentry
+			repeat := config.protectQuery - 1
+			password, err := readPassphrase(pinentry, "protection", repeat)
 			if err != nil {
 				fatal("%s", err)
 			}
-			if err := key.Load(packets[0], config.passphrase); err != nil {
+			config.protectPassword = password
+			if err := key.Load(packets[0], password); err != nil {
 				fatal("%s", err)
 			}
 		}
@@ -447,8 +460,8 @@ func main() {
 
 		config.subkey = false
 		if len(packets) >= 5 {
-			passphrase := config.passphrase
-			if err := subkey.Load(packets[3], passphrase); err != nil {
+			password := config.protectPassword
+			if err := subkey.Load(packets[3], password); err != nil {
 				fatal("%s", err)
 			}
 			config.subkey = true
@@ -589,8 +602,19 @@ func (k *completeKey) outputPGP(config *config) {
 			buf.Write(key.Bind(subkey, config.created))
 		}
 	} else {
+		if config.protectQuery > 0 && config.protectPassword == nil {
+			var err error
+			pinentry := config.pinentry
+			repeat := config.protectQuery - 1
+			password, err := readPassphrase(pinentry, "protection", repeat)
+			if err != nil {
+				fatal("%s", err)
+			}
+			config.protectPassword = password
+		}
+
 		if config.protect {
-			buf.Write(key.EncPacket(config.passphrase))
+			buf.Write(key.EncPacket(config.protectPassword))
 		} else {
 			buf.Write(key.Packet())
 		}
@@ -598,7 +622,7 @@ func (k *completeKey) outputPGP(config *config) {
 		buf.Write(key.SelfSign(userid, config.created, flags))
 		if config.subkey {
 			if config.protect {
-				buf.Write(subkey.EncPacket(config.passphrase))
+				buf.Write(subkey.EncPacket(config.protectPassword))
 			} else {
 				buf.Write(subkey.Packet())
 			}
