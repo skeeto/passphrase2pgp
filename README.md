@@ -305,6 +305,11 @@ while it was being developed.
 
 [mg]: https://blog.cryptographyengineering.com/2014/08/13/whats-matter-with-pgp/
 
+## Roadmap
+
+* Protected SSH key output
+* AEAD (tag 20) encryption and limited decryption
+
 ## References
 
 * [RFC 4880: OpenPGP Message Format](https://tools.ietf.org/html/rfc4880)
