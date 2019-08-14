@@ -611,6 +611,8 @@ func (k *completeKey) outputPGP(config *config) {
 				fatal("%s", err)
 			}
 			config.protectPassword = password
+		} else if config.protectPassword == nil {
+			config.protectPassword = config.passphrase
 		}
 
 		if config.protect {
