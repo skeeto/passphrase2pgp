@@ -1,10 +1,16 @@
 package openpgp
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"io"
+	"strings"
 )
+
+var ErrInvalidArmor = errors.New("invalid armored data")
+var ErrArmorCRC = errors.New("invalid armored checksum")
 
 // Armor returns the ASCII armored version of its input packet. It
 // autodetects what kind of armor should be used based on the packet
@@ -34,17 +40,91 @@ func Armor(buf []byte) []byte {
 
 	var asc bytes.Buffer
 	asc.WriteString(beg)
-	wrap := &wrapper{&asc, 64, 0}
-	b64 := base64.NewEncoder(base64.RawStdEncoding.WithPadding('='), wrap)
-	b64.Write(buf)
-	b64.Close()
-	asc.WriteString("\n=")
-	b64 = base64.NewEncoder(base64.RawStdEncoding, &asc)
-	crc := crc24(buf)
-	b64.Write([]byte{byte(crc >> 16), byte(crc >> 8), byte(crc)})
-	b64.Close()
+	asc.Write(b64encode(buf))
+	asc.WriteByte('\n')
+	asc.WriteString(b64crc(crc24(buf)))
 	asc.WriteString(end)
 	return asc.Bytes()
+}
+
+func b64encode(in []byte) []byte {
+	var out bytes.Buffer
+	wrap := &wrapper{&out, 64, 0}
+	b64 := base64.NewEncoder(base64.RawStdEncoding.WithPadding('='), wrap)
+	b64.Write(in)
+	b64.Close()
+	return out.Bytes()
+}
+
+func b64decode(buf []byte) ([]byte, error) {
+	r := bytes.NewReader(buf)
+	b64 := base64.NewDecoder(base64.RawStdEncoding.WithPadding('='), r)
+	var out bytes.Buffer
+	if _, err := io.Copy(&out, b64); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+func b64crc(crc int32) string {
+	buf := []byte{byte(crc >> 16), byte(crc >> 8), byte(crc)}
+	return "=" + string(b64encode(buf))
+}
+
+func Dearmor(buf []byte) ([]byte, error) {
+	s := bufio.NewScanner(bytes.NewReader(buf))
+
+	// skip opening line
+	if !s.Scan() {
+		return nil, ErrInvalidArmor
+	}
+	if !strings.HasPrefix(s.Text(), "-----BEGIN") {
+		return nil, ErrInvalidArmor
+	}
+
+	// find first blank line
+	found := false
+	for s.Scan() {
+		if s.Text() == "" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ErrInvalidArmor
+	}
+
+	var b64 bytes.Buffer
+	for s.Scan() {
+		text := s.Text()
+		if strings.HasPrefix(text, "=") {
+			break
+		}
+		b64.WriteString(text)
+	}
+
+	check := s.Text()
+	if len(check) != 5 {
+		return nil, ErrInvalidArmor
+	}
+
+	// skip closing line
+	if !s.Scan() {
+		return nil, ErrInvalidArmor
+	}
+	if !strings.HasPrefix(s.Text(), "-----END") {
+		return nil, ErrInvalidArmor
+	}
+
+	raw, err := b64decode(b64.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	if check != b64crc(crc24(raw)) {
+		return nil, ErrArmorCRC
+	}
+
+	return raw, nil
 }
 
 // Return CRC-24 checksum for a buffer.
