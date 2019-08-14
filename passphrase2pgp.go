@@ -124,7 +124,7 @@ func usage(w io.Writer) {
 	f("Options:")
 	f(i, "-a, --armor            encode output in ASCII armor")
 	f(i, "-c, --check KEYID      require last Key ID bytes to match")
-	f(i, "-e, --protect[=COUNT]  protect private key with S2K")
+	f(i, "-e, --protect[=ASKS]   protect private key with S2K")
 	f(i, "-f, --format pgp|ssh   select key format [pgp]")
 	f(i, "-h, --help             print this help message")
 	f(i, "-i, --input FILE       read passphrase from file")

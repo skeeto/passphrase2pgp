@@ -64,7 +64,7 @@ Use `--help` (`-h`) for a full option listing:
 ```
 Usage:
    passphrase2pgp <-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]
-       -K [-aenps] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
+       -K [-anps] [-e[n]] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
 Commands:
@@ -74,7 +74,7 @@ Commands:
 Options:
    -a, --armor            encode output in ASCII armor
    -c, --check KEYID      require last Key ID bytes to match
-   -e, --protect          protect private key with S2K
+   -e, --protect[=ASKS]   protect private key with S2K
    -f, --format pgp|ssh   select key format [pgp]
    -h, --help             print this help message
    -i, --input FILE       read passphrase from file
@@ -106,6 +106,14 @@ either case, `--repeat` (`-r`) is set to zero unless it was explicitly
 provided. The additional passphrase check is unnecessary if they Key ID
 is being checked.
 
+The `--protect` option uses OpenPGP's S2K feature to encrypt the private
+key in the exported format. Rather than prompt for an S2K passphrase,
+passphrase2pgp will reuse your derivation passphrase as the protection
+passphrase. However, keep in mind that the S2K algorithm is *much*
+weaker than the algorithm used to derive the asymmetric key, Argon2id.
+Given an optional numeric argument, `--protect` will prompt that many
+times (like `--repeat`) for a separate S2K passphrase.
+
 By default keys are not given an expiration date and do not expire. To
 retire a key, you would need to use another OpenPGP implementation to
 import your key and generate a revocation certificate. Alternatively,
@@ -130,38 +138,34 @@ incorrect (earlier) date.
 [t4669]: https://dev.gnupg.org/T4669
 [t4670]: https://dev.gnupg.org/T4670
 
-The `--protect` option uses OpenPGP's S2K feature to encrypt the private
-key in the exported format. Rather than prompt for a new passphrase,
-passphrase2pgp will reuse your derivation passphrase as the protection
-passphrase. However, keep in mind that the S2K algorithm is *much*
-weaker than the algorithm used to derive the asymmetric key, Argon2id.
-
 ### Examples
 
-Generate a private key and send it to GnuPG (with no protection passphrase):
+Generate a private key and send it to GnuPG (no protection passphrase):
 
     $ passphrase2pgp --uid "..." | gnupg --import
 
-Or, with `--protect`, reuse the derivation passphrase as a protection
-passphrase so that the key is encrypted on the GnuPG keyring:
+Or, with `--protect`, reuse the derivation passphrase as the protection
+passphrase so that the key is encrypted on the GnuPG keyring using your
+derivation passphrase:
 
     $ passphrase2pgp --protect --uid "..." | gnupg --import
+
+Or to prompt (once) for a different passphrase to use as the protection
+passphrase:
+
+    $ passphrase2pgp --protect=1 --uid "..." | gnupg --import
 
 Create an armored public key for publishing and sharing:
 
     $ passphrase2pgp --uid "..." --armor --public > Real-Name.asc
 
-Determine `--uid` from the environment so that you don't need to type it
-out every time you use passphrase2pgp:
+Since passing `--uid` every time you need it is tedious, that argument
+can be supplied implicitly via two environment variables, `REALNAME` and
+`EMAIL`. The remaining examples assume these variables are set.
 
     $ export REALNAME="Real Name"
     $ export EMAIL="name@example.com"
     $ passphrase2pgp -ap > Real-Name.asc
-
-Generate a private key and save it to a file in OpenPGP format for later
-use below:
-
-    $ passphrase2pgp --uid "..." > secret.pgp
 
 Create detached signatures (`-S`) for some files:
 
@@ -174,38 +178,106 @@ would use GnuPG to verify the signatures like so:
     $ gpg --verify document.txt.sig
     $ gpg --verify avatar.jpg.sig
 
-Or, in order to avoid entering the passphrase again and waiting on key
-generation, use the previously saved private key to sign some files
-without entering your passphrase:
+Normally each command must derive keys from scratch from the passphrase,
+requiring the user to re-enter it for each command and wait. To avoid
+this, save the secret key to a file in OpenPGP format and then load
+(`--load`) it for other commands. This will save an unprotected version:
+
+    $ passphrase2pgp > secret.pgp
+
+Then you can sign files without re-entering your passphrase:
 
     $ passphrase2pgp -S --load secret.pgp document.txt avatar.jpg
 
-Same, but now with ASCII-armored signatures:
+If you used an S2K protection passphrase (`--protect`), passphrase2pgp
+will prompt for it when loading such keys.
+
+More signatures, but ASCII-armored:
 
     $ passphrase2pgp -S -lsecret.pgp --armor document.txt avatar.jpg
     $ gpg --verify document.txt.asc
     $ gpg --verify avatar.jpg.asc
 
-Create a cleartext-signed text document:
+Create a cleartext-signed (`-T`) text document:
 
     $ passphrase2pgp -T >signed-doc.txt <doc.txt
 
-Append your public key to gpgv's trusted keyring so that gpgv can verify
-your own signatures:
+### Intended Workflow
 
-    $ passphrase2pgp -p >> ~/.gnupg/trustedkeys.kbx
-    $ gpgv document.txt.sig document.txt
+There are two usage patterns: "lite" and "full".
 
-### Interacting with GnuPG
+When a "lite" user sets up a new computer, they run passphrase2pgp just
+once and send the key straight into GnuPG. After this they use GnuPG for
+everything OpenPGP-related. This command installs the secret key in
+GnuPG with a separate, more convenient, protection passphrase:
+
+    $ passphrase2pgp -u '...' -e1 | gpg --import
+
+This user will not need to backup their keyring since they can always
+regenerate their key in the future. They're also free to destroy their
+keyring at any moment, such as before their computer is accessed by
+untrusted people (border agents, etc.).
+
+A "full" user will use passphrase2pgp directly for signatures and will
+never store the secret key permanently. They derive the key on demand
+only when needed. To make this convenient, this users sets `REALNAME`,
+`EMAIL`, and `KEYID` in their `.profile`. This means they never have to
+supply `--uid`, and there's no passphrase confirmation prompt.
+
+For example, supposed John Doe is a "full" user setting up for the first
+time with the passphrase "boa trusted stew critics dispute asked naming
+gyms". First he sets his user ID in his `.profile`:
+
+    export REALNAME="John Doe"
+    export EMAIL="john.doe@example.com"
+
+Then he generates his public key and gets the fingerprint:
+
+    $ passphrase2pgp --verbose --public >John-Doe.asc
+    User ID: John Doe <john.doe@example.com>
+    passphrase: 
+    passphrase (repeat): 
+    Key ID: C8A22A0535AF18BC83D7AE21406CC07F8DABE73B
+
+He publishes `John-Doe.asc` and adds the fingerprint to his `.profile`:
+
+    export KEYID=C8A22A0535AF18BC83D7AE21406CC07F8DABE73B
+
+This is the actual key for that user ID and passphrase, so you can try
+each of these commands yourself. Later if he, say, needs to clearsign a
+message:
+
+    $ echo The swallow flies at midnight >message.txt
+    $ passphrase2pgp -T <message.txt
+    passphrase: 
+    -----BEGIN PGP SIGNED MESSAGE-----
+    Hash: SHA256
+
+    The swallow flies at midnight
+    -----BEGIN PGP SIGNATURE-----
+
+    wnUEARYIACcFAl1UG1gJEEBswH+Nq+c7FiEEyKIqBTWvGLyD164hQGzAf42r5zsA
+    ADWqAP9KfoQm02q+AXE5brS9lNZ8LVjFs6CefMA4C/83Da7E4wD/QnYNyFmpmTOm
+    B6w1UvDnxyD0ksjmyj6NDiRs25b20gk=
+    =0gf5
+    -----END PGP SIGNATURE-----
+
+Again, this was all done without ever storing the secret key in the file
+system, even in protected form.
+
+### GnuPG Trust
 
 Trust is stored external to keys, so imported keys are always initially
 untrusted. You will likely want to mark your newly-imported primary key
-as trusted.
+as trusted. Or use the `--trusted-key` option in `gpg.conf`.
 
     $ gpg --edit-key "Real Name"
     gpg> trust
 
-Or use the `--trusted-key` option in `gpg.conf`.
+Similarly, to allow gpgv to verify your signatures, append your public
+key to its trusted keyring:
+
+    $ passphrase2pgp -p >> ~/.gnupg/trustedkeys.kbx
 
 #### Signing Git tags and commits
 
@@ -271,6 +343,39 @@ can be done with `ssh-keygen`:
 
     $ ssh-keygen -p -f id_ed25519
 
+**Generally you really *should* have a unique SSH key per host**, and
+this sort of long-term key is both unnecessary and undesired. If you
+loose access to that computer — theft, retirement, etc. — then you can
+remove just that host's key as an authorized key without affecting other
+hosts. In general, SSH keys need not and should not be backed up,
+including in your brain.
+
+However, there is at least one case where a long-term, important SSH key
+could be useful. Suppose you have a vital, remote system with password
+authentication disabled. If you loose access to all of the authorized
+keys, you can no longer remotely log into that system. Correcting this
+problem may require traveling to the computer's location or using some
+inconvenient means to regain access.
+
+Instead, you could use passphrase2pgp to generate an *emergency* SSH key
+and install it as an authorized key on the remote host. *But* don't
+actually store the private key anywhere and don't normally use this key!
+When you're in a pinch, use passphrase2pgp to regenerate the emergency
+key, recover your access, then immediately destroy the emergency key.
+
+Setting up the emergency key ahead of time:
+
+    $ passphrase2pgp -u emergency -f ssh -p > ~/.ssh/emergency.pub
+    $ ssh-copy-id -f -i ~/.ssh/emergency.pub important.example.com
+
+Later, when in dire straits, generate the private key, and use it to
+install a non-emergency key as a new authorized key:
+
+    $ (umask 077; passphrase2pgp -u emergency -f ssh > ~/.ssh/emergency)
+    $ ssh-add ~/.ssh/emergency
+    $ rm ~/.ssh/emergency
+    $ ssh-copy-id -i ~/.ssh/id_ed25519 important.example.com
+
 ## Justification
 
 Isn't generating a key from a passphrase foolish? If you can reproduce
@@ -289,19 +394,19 @@ around US$ 158 *billion* to for just a 50% chance of cracking that
 passphrase**. If your passphrase is generated by a random process, and
 it's at least this long, it is not the weak point in this system.
 
-## Philosophy
+## Regarding the encryption subkey
 
 Since [OpenPGP encryption is neither good nor useful anymore][mg], I
 considered not generating an encryption subkey. The "privacy" portion of
-OpenPGP has become the least important part.
+OpenPGP has become the least important part. However, the upcoming
+update to OpenPGP, rfc4880bis, adds AEAD encryption, and this could make
+encryption interesting again.
 
 OpenPGP digital signatures still have *some* limited use, mostly due to
-momentum and lack of alternatives. The OpenPGP specification is
-over-engineered, loaded with useless legacy cruft, and ambiguous in many
-places. GnuPG is honestly not a great OpenPGP implementation, and I have
-low confidence in it. I stubbed my toe on a number of minor GnuPG bugs
-when hammering it with (usually invalid) output from passphrase2pgp
-while it was being developed.
+the lack of adoption of the alternatives. The OpenPGP specification is
+too flexible and is loaded with legacy cruft. Further, GnuPG is honestly
+not a great OpenPGP implementation, and I do not have high confidence in
+it.
 
 [mg]: https://blog.cryptographyengineering.com/2014/08/13/whats-matter-with-pgp/
 
