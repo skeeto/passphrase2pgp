@@ -728,8 +728,11 @@ func parsePackets(filename string) ([]openpgp.Packet, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(data) < 1 {
+		return nil, openpgp.ErrInvalidPacket
+	}
 
-	if bytes.HasPrefix(data, []byte("-----BEGIN")) {
+	if data[0] < 128 {
 		var err error
 		data, err = openpgp.Dearmor(data)
 		if err != nil {

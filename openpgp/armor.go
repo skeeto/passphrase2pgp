@@ -10,6 +10,7 @@ import (
 )
 
 var ErrInvalidArmor = errors.New("invalid armored data")
+var ErrNoData = errors.New("no OpenPGP data found")
 var ErrArmorCRC = errors.New("invalid armored checksum")
 
 // Armor returns the ASCII armored version of its input packet. It
@@ -74,16 +75,20 @@ func b64crc(crc int32) string {
 func Dearmor(buf []byte) ([]byte, error) {
 	s := bufio.NewScanner(bytes.NewReader(buf))
 
-	// skip opening line
-	if !s.Scan() {
-		return nil, ErrInvalidArmor
+	// find the opening line
+	found := false
+	for s.Scan() {
+		if strings.HasPrefix(s.Text(), "-----BEGIN") {
+			found = true
+			break
+		}
 	}
-	if !strings.HasPrefix(s.Text(), "-----BEGIN") {
-		return nil, ErrInvalidArmor
+	if !found {
+		return nil, ErrNoData
 	}
 
 	// find first blank line
-	found := false
+	found = false
 	for s.Scan() {
 		if s.Text() == "" {
 			found = true
@@ -94,6 +99,7 @@ func Dearmor(buf []byte) ([]byte, error) {
 		return nil, ErrInvalidArmor
 	}
 
+	// gather up base64 data
 	var b64 bytes.Buffer
 	for s.Scan() {
 		text := s.Text()
@@ -103,6 +109,7 @@ func Dearmor(buf []byte) ([]byte, error) {
 		b64.WriteString(text)
 	}
 
+	// grab the CRC-24 checksum
 	check := s.Text()
 	if len(check) != 5 {
 		return nil, ErrInvalidArmor
@@ -116,6 +123,7 @@ func Dearmor(buf []byte) ([]byte, error) {
 		return nil, ErrInvalidArmor
 	}
 
+	// verify checksum
 	raw, err := b64decode(b64.Bytes())
 	if err != nil {
 		return nil, err
