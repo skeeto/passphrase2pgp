@@ -33,6 +33,8 @@ const (
 
 	formatPGP = iota
 	formatSSH
+
+	version = "0.1.0"
 )
 
 // Print the message like fmt.Printf() and then os.Exit(1).
@@ -137,6 +139,7 @@ func usage(w io.Writer) {
 	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
 	f(i, "-u, --uid USERID       user ID for the key")
 	f(i, "-v, --verbose          print additional information")
+	f(i, "--version              print version information")
 	f(i, "-x, --expires[=SPEC]   set key expiration time ["+defaultExpires+"]")
 	bw.Flush()
 }
@@ -169,6 +172,7 @@ func parse() *config {
 		{"time", 't', optparse.KindRequired},
 		{"uid", 'u', optparse.KindRequired},
 		{"verbose", 'v', optparse.KindNone},
+		{"version", 0, optparse.KindNone},
 		{"expires", 'x', optparse.KindOptional},
 	}
 
@@ -272,6 +276,9 @@ func parse() *config {
 			uidSeen = true
 		case "verbose":
 			conf.verbose = true
+		case "version":
+			fmt.Println("passphrase2pgp", version)
+			os.Exit(0)
 		case "expires":
 			conf.expires = timespec(result.Optarg)
 		}
