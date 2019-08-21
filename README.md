@@ -87,6 +87,7 @@ Options:
    -t, --time SECONDS     key creation date (unix epoch seconds)
    -u, --uid USERID       user ID for the key
    -v, --verbose          print additional information
+   --version              print version information
    -x, --expires[=SPEC]   set key expiration time [2y]
 ```
 
