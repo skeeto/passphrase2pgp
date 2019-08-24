@@ -5,8 +5,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -24,6 +22,7 @@ import (
 const (
 	kdfTime   = 8
 	kdfMemory = 1024 * 1024 // 1 GB
+	sshRounds = 64 // bcrypt_pbkdf rounds
 
 	defaultExpires = "2y"
 
@@ -609,21 +608,8 @@ func (k *completeKey) outputPGP(config *config) {
 			buf.Write(key.Bind(subkey, config.created))
 		}
 	} else {
-		if config.protectQuery > 0 && config.protectPassword == nil {
-			var err error
-			pinentry := config.pinentry
-			repeat := config.protectQuery - 1
-			password, err := readPassphrase(pinentry, "protection", repeat)
-			if err != nil {
-				fatal("%s", err)
-			}
-			config.protectPassword = password
-		} else if config.protectPassword == nil {
-			config.protectPassword = config.passphrase
-		}
-
 		if config.protect {
-			buf.Write(key.EncPacket(config.protectPassword))
+			buf.Write(key.EncPacket(getProtect(config)))
 		} else {
 			buf.Write(key.Packet())
 		}
@@ -648,84 +634,41 @@ func (k *completeKey) outputPGP(config *config) {
 	}
 }
 
-// PEM-encode a string
-func pem(str []byte) []byte {
-	buf := make([]byte, len(str)+4)
-	binary.BigEndian.PutUint32(buf, uint32(len(str)))
-	copy(buf[4:], str)
-	return buf
+func getProtect(config *config) []byte {
+	if config.protectPassword == nil {
+		if config.protectQuery > 0 {
+			var err error
+			pinentry := config.pinentry
+			repeat := config.protectQuery - 1
+			password, err := readPassphrase(pinentry, "protection", repeat)
+			if err != nil {
+				fatal("%s", err)
+			}
+			config.protectPassword = password
+		} else if config.protectPassword == nil {
+			config.protectPassword = config.passphrase
+		}
+	}
+	return config.protectPassword
 }
 
 func (k *completeKey) outputSSH(config *config) {
-	// packet is the binary form of the PEM encoding
-	var packet bytes.Buffer
-	packet.Write([]byte("openssh-key-v1\x00")) // magic
-	packet.Write(pem([]byte("none")))          // ciphername
-	packet.Write(pem([]byte("none")))          // kdfname
-	packet.Write(pem([]byte{}))                // kdfoptions
-	packet.Write([]byte{0, 0, 0, 1})           // number of keys
-
-	// Public key (nested PEM)
-	var pubkey bytes.Buffer
-	pubkey.Write(pem([]byte("ssh-ed25519")))
-	pubkey.Write(pem(k.key.Pubkey()))
-	packet.Write(pem(pubkey.Bytes()))
-
-	// Private key (nested PEM)
-	var seckey bytes.Buffer
-	seckey.Write([]byte{0, 0, 0, 0, 0, 0, 0, 0}) // check bytes
-	seckey.Write(pem([]byte("ssh-ed25519")))
-	seckey.Write(pem(k.key.Pubkey()))
-	concat := append(k.key.Seckey()[0:32:32], k.key.Pubkey()...)
-	// (Yes, the public key has appeared three times now!)
-	seckey.Write(pem(concat))
-	seckey.Write(pem(k.userid.ID))
-	for i := 1; seckey.Len()%8 != 0; i++ {
-		seckey.Write([]byte{byte(i)})
-	}
-	packet.Write(pem(seckey.Bytes()))
-
-	// Encode the binary packet as base64
-	var packet64 bytes.Buffer
-	encoding := base64.RawStdEncoding.WithPadding('=')
-	b64 := base64.NewEncoder(encoding, &packet64)
-	b64.Write(packet.Bytes())
-	b64.Close()
-
-	// Wrap the base64 encoding into PEM ASCII format
-	var sec bytes.Buffer
-	sec.WriteString("-----BEGIN OPENSSH PRIVATE KEY-----\n")
-	data := packet64.Bytes()
-	// Pad to 8 bytes
-	for len(data) > 0 {
-		n := 70
-		if len(data) < n {
-			n = len(data)
-		}
-		sec.Write(data[:n])
-		sec.WriteByte(0x0a)
-		data = data[n:]
-	}
-	sec.WriteString("-----END OPENSSH PRIVATE KEY-----\n")
-
-	// Prepare the public key output (one line)
-	var pub bytes.Buffer
-	pub.WriteString("ssh-ed25519 ")
-	b64 = base64.NewEncoder(encoding, &pub)
-	var pubpacket bytes.Buffer
-	pubpacket.Write(pem([]byte("ssh-ed25519")))
-	pubpacket.Write(pem(k.key.Pubkey()))
-	b64.Write(pubpacket.Bytes())
-	pub.WriteByte(0x20)
-	pub.Write(k.userid.ID)
-	pub.WriteByte(0x0a)
-
+	pubkey := k.key.Pubkey()
+	seckey := k.key.Seckey()
+	uid := k.userid.ID
 	if !config.public {
-		if _, err := os.Stdout.Write(sec.Bytes()); err != nil {
+		var b []byte
+		if config.protect {
+			b = secSSH(pubkey, seckey, uid, getProtect(config), sshRounds)
+		} else {
+			b = secSSH(pubkey, seckey, uid, nil, 0)
+		}
+		if _, err := os.Stdout.Write(b); err != nil {
 			fatal("%s", err)
 		}
 	}
-	if _, err := os.Stdout.Write(pub.Bytes()); err != nil {
+	b := pubSSH(pubkey, uid)
+	if _, err := os.Stdout.Write(b); err != nil {
 		fatal("%s", err)
 	}
 }

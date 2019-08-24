@@ -322,11 +322,12 @@ Tag verification (via script to fallback to GnuPG):
 
 ## OpenSSH format
 
-Despite the name, passphrase2pgp can output a key in unprotected OpenSSH
-format, selected by `--format` (`-f`). When using this format, the
-`--armor` (`-a`), `--now` (`-n`), `--subkey` (`-s`), and `--time` (`-t`)
-options are ignored since they do not apply. The user ID becomes the key
-comment and is still used as the salt.
+Despite the name, passphrase2pgp can output a key in OpenSSH format,
+selected by `--format` (`-f`). Passphrase protection (bcrypt) is
+supported. When using this format, the `--armor` (`-a`), `--now` (`-n`),
+`--subkey` (`-s`), and `--time` (`-t`) options are ignored since they do
+not apply. The user ID becomes the key comment and is still used as the
+salt.
 
     $ passphrase2pgp --format ssh | (umask 077; tee id_ed25519)
 
@@ -413,7 +414,6 @@ it.
 
 ## Roadmap
 
-* Protected SSH key output
 * AEAD (tag 20) encryption and limited decryption
 
 ## References
