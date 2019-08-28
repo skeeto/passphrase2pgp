@@ -67,4 +67,22 @@ $gpg --passphrase-file <(echo $passphrase) \
      --pinentry-mode loopback \
      --import $homedir/seckey.s2k.asc
 
+echo === Testing Subkeys ===
+./passphrase2pgp -K --input <(echo $passphrase) \
+                    --subkey \
+                    --armor \
+    | tee $homedir/secsub.asc
+./passphrase2pgp -K --load $homedir/secsub.asc \
+                    --subkey \
+                    --public \
+                    --armor \
+    | tee $homedir/pubsub.asc
+$gpg --import $homedir/pubsub.asc
+echo Meet at midnight > $homedir/message.txt
+$gpg --trust-model always \
+     --recipient "$REALNAME" \
+     --encrypt $homedir/message.txt
+$gpg --import $homedir/secsub.asc
+$gpg --decrypt $homedir/message.txt.gpg
+
 echo === All Tests Passed ===
