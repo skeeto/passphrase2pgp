@@ -23,23 +23,6 @@ trap cleanup INT TERM EXIT
 gpg="gpg --quiet --homedir $homedir"
 gpgv="gpgv --quiet --homedir $homedir"
 
-echo === Testing SSH Keys ===
-./passphrase2pgp -K --uid doe@exmaple.com \
-                    --check '' \
-                    --format ssh \
-                    --input <(echo $passphrase) \
-                    --protect | \
-    (umask 077; tee $homedir/id_ed25519)
-ssh-keygen -y -P $passphrase -f $homedir/id_ed25519 | \
-    tee $homedir/id_ed25519.pub
-./passphrase2pgp -K --uid john@exmaple.com \
-                    --check '' \
-                    --format ssh \
-                    --input <(echo $passphrase) | \
-    (umask 077; tee $homedir/id_ed25519x)
-ssh-keygen -y -P '' -f $homedir/id_ed25519x | \
-    tee $homedir/id_ed25519x.pub
-
 echo === Testing Unprotected PGP Keys ===
 ./passphrase2pgp -K --input <(echo $passphrase) \
                     --armor | \
@@ -84,5 +67,22 @@ $gpg --trust-model always \
      --encrypt $homedir/message.txt
 $gpg --import $homedir/secsub.asc
 $gpg --decrypt $homedir/message.txt.gpg
+
+echo === Testing SSH Keys ===
+./passphrase2pgp -K --uid doe@exmaple.com \
+                    --check '' \
+                    --format ssh \
+                    --input <(echo $passphrase) \
+                    --protect | \
+    (umask 077; tee $homedir/id_ed25519)
+ssh-keygen -y -P $passphrase -f $homedir/id_ed25519 | \
+    tee $homedir/id_ed25519.pub
+./passphrase2pgp -K --uid john@exmaple.com \
+                    --check '' \
+                    --format ssh \
+                    --input <(echo $passphrase) | \
+    (umask 077; tee $homedir/id_ed25519x)
+ssh-keygen -y -P '' -f $homedir/id_ed25519x | \
+    tee $homedir/id_ed25519x.pub
 
 echo === All Tests Passed ===
