@@ -9,8 +9,13 @@ import (
 	"strings"
 )
 
+// ErrInvalidArmor indicates that the input is invalid.
 var ErrInvalidArmor = errors.New("invalid armored data")
+
+// ErrNoData indicates the armor was valid, but no OpenPGP data was found.
 var ErrNoData = errors.New("no OpenPGP data found")
+
+// ErrArmorCRC indicates that the CRC checksum did not match.
 var ErrArmorCRC = errors.New("invalid armored checksum")
 
 // Armor returns the ASCII armored version of its input packet. It
@@ -72,6 +77,7 @@ func b64crc(crc int32) string {
 	return "=" + string(b64encode(buf))
 }
 
+// Dearmor returns the decoded, raw binary data from armored input.
 func Dearmor(buf []byte) ([]byte, error) {
 	s := bufio.NewScanner(bytes.NewReader(buf))
 

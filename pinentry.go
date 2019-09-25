@@ -12,12 +12,12 @@ import (
 )
 
 var (
-	// pinentryProtocolErr means pinentry responded incorrectly.
-	pinentryProtocolErr = errors.New("pinentry protocol error")
-	// pinentryCancelErr means the user canceled the input.
-	pinentryCancelErr = errors.New("pinentry input canceled")
-	// pinentryMismatchErr means the confirmation passphrase did not match.
-	pinentryMismatchErr = errors.New("passphrases do not match")
+	// errPinentryProtocol means pinentry responded incorrectly.
+	errPinentryProtocol = errors.New("pinentry protocol error")
+	// errPinentryCancel means the user canceled the input.
+	errPinentryCancel = errors.New("pinentry input canceled")
+	// errPinentryMismatch means the confirmation passphrase did not match.
+	errPinentryMismatch = errors.New("passphrases do not match")
 )
 
 // pinentry represents a running, interactive pinentry process used for
@@ -65,7 +65,7 @@ func (p *pinentry) wait() []byte {
 		if strings.HasPrefix(line, "ERR ") {
 			errstr := line[4:]
 			if strings.HasPrefix(errstr, "83886179 ") {
-				p.err = pinentryCancelErr
+				p.err = errPinentryCancel
 				return data
 			}
 			p.err = errors.New(errstr)
@@ -74,24 +74,24 @@ func (p *pinentry) wait() []byte {
 			return data
 		} else if strings.HasPrefix(line, "D ") {
 			if data != nil {
-				p.err = pinentryProtocolErr
+				p.err = errPinentryProtocol
 				return nil
 			}
 			var ok bool
 			data, ok = pinentryDecode(p.out.Text()[2:])
 			if !ok {
-				p.err = pinentryProtocolErr
+				p.err = errPinentryProtocol
 				return nil
 			}
 		} else {
-			p.err = pinentryProtocolErr
+			p.err = errPinentryProtocol
 			return data
 		}
 	}
 	if err := p.out.Err(); err != nil {
 		p.err = err
 	} else {
-		p.err = pinentryProtocolErr
+		p.err = errPinentryProtocol
 	}
 	return data
 }
@@ -161,7 +161,7 @@ func pinentryPassphrase(command, hint string, repeat int) ([]byte, error) {
 	for i := 0; i < repeat; i++ {
 		again := pe.Send("GETPIN")
 		if !bytes.Equal(passphrase, again) {
-			return nil, pinentryMismatchErr
+			return nil, errPinentryMismatch
 		}
 	}
 	return passphrase, pe.err
