@@ -13,7 +13,7 @@ import (
 )
 
 // ErrInvalidPacket means a packet is inconsistent or contains invalid data.
-var ErrInvalidPacket= errors.New("invalid OpenPGP data")
+var ErrInvalidPacket = errors.New("invalid OpenPGP data")
 
 // Returns data encoded as an OpenPGP multiprecision integer.
 func mpi(data []byte) []byte {

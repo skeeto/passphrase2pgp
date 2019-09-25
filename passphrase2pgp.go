@@ -22,7 +22,7 @@ import (
 const (
 	kdfTime   = 8
 	kdfMemory = 1024 * 1024 // 1 GB
-	sshRounds = 64 // bcrypt_pbkdf rounds
+	sshRounds = 64          // bcrypt_pbkdf rounds
 
 	defaultExpires = "2y"
 

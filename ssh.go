@@ -14,7 +14,7 @@ type pem struct {
 	buf   bytes.Buffer
 	b64   io.WriteCloser
 	stack []io.Writer
-	bound  bool
+	bound bool
 }
 
 func newPEM(bound bool) *pem {
