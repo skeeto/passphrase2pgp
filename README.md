@@ -24,7 +24,7 @@ See also: [Long Key ID Collider][long]
 
 ## Installation
 
-    $ go get nullprogram.com/x/passphrase2pgp
+    $ GO111MODULE=on go get nullprogram.com/x/passphrase2pgp
 
 ## Usage
 
