@@ -14,8 +14,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/skeeto/optparse-go"
-	"github.com/skeeto/passphrase2pgp/openpgp"
+	"nullprogram.com/x/optparse"
+	"nullprogram.com/x/passphrase2pgp/openpgp"
 	"golang.org/x/crypto/argon2"
 )
 

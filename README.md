@@ -24,7 +24,7 @@ See also: [Long Key ID Collider][long]
 
 ## Installation
 
-    $ go get -u github.com/skeeto/passphrase2pgp
+    $ go get nullprogram.com/x/passphrase2pgp
 
 ## Usage
 
