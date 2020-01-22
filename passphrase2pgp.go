@@ -32,9 +32,9 @@ const (
 
 	formatPGP = iota
 	formatSSH
-
-	version = "0.1.0"
 )
+
+var version = "1.0.1"
 
 // Print the message like fmt.Printf() and then os.Exit(1).
 func fatal(format string, args ...interface{}) {
