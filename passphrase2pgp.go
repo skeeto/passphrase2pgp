@@ -14,9 +14,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"golang.org/x/crypto/argon2"
 	"nullprogram.com/x/optparse"
 	"nullprogram.com/x/passphrase2pgp/openpgp"
-	"golang.org/x/crypto/argon2"
 )
 
 const (
