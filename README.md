@@ -373,9 +373,7 @@ Setting up the emergency key ahead of time:
 Later, when in dire straits, generate the private key, and use it to
 install a non-emergency key as a new authorized key:
 
-    $ (umask 077; passphrase2pgp -u emergency -f ssh > ~/.ssh/emergency)
-    $ ssh-add ~/.ssh/emergency
-    $ rm ~/.ssh/emergency
+    $ passphrase2pgp -u emergency -f ssh | ssh-add -
     $ ssh-copy-id -i ~/.ssh/id_ed25519 important.example.com
 
 ## Justification
