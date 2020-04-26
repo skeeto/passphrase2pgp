@@ -34,7 +34,7 @@ const (
 	formatSSH
 )
 
-var version = "1.0.1"
+var version = "1.0.2"
 
 // Print the message like fmt.Printf() and then os.Exit(1).
 func fatal(format string, args ...interface{}) {
