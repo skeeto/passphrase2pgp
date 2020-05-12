@@ -283,42 +283,14 @@ key to its trusted keyring:
 #### Signing Git tags and commits
 
 It's even possible to use passphrase2pgp directly to sign your Git tags
-and commits. Just configure `gpg.program` to passphrase2pgp:
+and commits. Just set `gpg.program` to passphrase2pgp:
 
     $ git config --global gpg.program passphrase2pgp
 
-However, with this setting you will be unable to verify commits and
-tags. To work around this problem, wrap passphrase2pgp in a script like
-the following, with options adjusted to taste (add `--repeat`, `--time`,
-etc.):
-
-```sh
-#!/bin/sh -e
-if [ "$2" != -bsau ]; then
-    exec gpg "$@"  # fallback GnuPG when not signing
-fi
-passphrase2pgp --sign --armor --uid "$3"
-printf '\n[GNUPG:] SIG_CREATED ' >&2
-```
-
-Then set `gpg.program` to this script instead:
-
-    $ git config --global gpg.program path/to/script
-
-This does *just* enough to convince Git that passphrase2pgp is actually
-GnuPG. Example session of signing a tag with passphrase2pgp:
-
-    $ git tag -s tagname -m 'Tag message'
-    passphrase: 
-    passphrase (repeat): 
-
-Tag verification (via script to fallback to GnuPG):
-
-    $ passphrase2pgp -u "..." -p | gpg --import
-    passphrase: 
-    passphrase (repeat): 
-    $ git verify-tag tagname
-    gpg: Good signature from ...
+When passphrase2pgp detects that it's been invoked via Git, it presents
+a GnuPG-like interface to Git. When asked to verify tags and commits
+(`git verify-tag`, `git verify-commit`), it delegates to the program
+named `gpg`.
 
 ## OpenSSH format
 

@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"strconv"
 	"time"
 	"unicode/utf8"
@@ -69,6 +70,21 @@ func firstLine(filename string) ([]byte, error) {
 		return nil, nil // empty files are ok
 	}
 	return s.Bytes(), nil
+}
+
+// Returns true if the beginning of the arguments slice matches the
+// pattern, and it has at least once trailing argument. Trailing
+// arguments are ignored.
+func argsEqual(args, pattern []string) bool {
+	if len(args) < len(pattern)+1 {
+		return false
+	}
+	for i, arg := range pattern {
+		if arg != args[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Derive a 64-byte seed from the given passphrase. The scale factor
@@ -175,12 +191,19 @@ func parse() *config {
 		{"expires", 'x', optparse.KindOptional},
 	}
 
+	var pretendGnuPGSign = []string{
+		"--status-fd=2", "-bsau",
+	}
+	var pretendGnuPGVerify = []string{
+		"--keyid-format=long", "--status-fd=1", "--verify",
+	}
+
 	var repeatSeen bool
 	var uidSeen bool
 	var timeSeen bool
 
 	args := os.Args
-	if len(args) == 4 && args[1] == "--status-fd=2" && args[2] == "-bsau" {
+	if argsEqual(args[1:], pretendGnuPGSign) {
 		// Pretend to be GnuPG in order to sign for Git. Unfortunately
 		// this is fragile, but there's no practical way to avoid it.
 		// The Git documentation says it depends on the GnuPG interface
@@ -188,6 +211,18 @@ func parse() *config {
 		// re-implement the entire GnuPG interface.
 		args = []string{args[0], "--sign", "--armor", "--uid", args[3]}
 		os.Stderr.WriteString("\n[GNUPG:] SIG_CREATED ")
+	} else if argsEqual(args[1:], pretendGnuPGVerify) {
+		// Delegate to GnuPG in order to verify for Git. Unfortunately
+		// this is also fragile, but it can't be avoided.
+		cmd := exec.Command("gpg", args[1:]...)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "%v\n", err)
+			os.Exit(err.(*exec.ExitError).ExitCode())
+		}
+		os.Exit(0)
 	}
 
 	results, rest, err := optparse.Parse(options, args)
