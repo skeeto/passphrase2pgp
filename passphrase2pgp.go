@@ -5,10 +5,15 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	stdpem "encoding/pem"
 	"fmt"
+	"golang.org/x/crypto/ed25519"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"os/exec"
 	"strconv"
@@ -33,6 +38,7 @@ const (
 
 	formatPGP = iota
 	formatSSH
+	formatTLS
 )
 
 var version = "1.1.0"
@@ -135,27 +141,27 @@ func usage(w io.Writer) {
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
-	f(i, "-K, --key              output a key (default)")
-	f(i, "-S, --sign             output detached signatures")
-	f(i, "-T, --clearsign        output a cleartext signature")
+	f(i, "-K, --key                 output a key (default)")
+	f(i, "-S, --sign                output detached signatures")
+	f(i, "-T, --clearsign           output a cleartext signature")
 	f("Options:")
-	f(i, "-a, --armor            encode output in ASCII armor")
-	f(i, "-c, --check KEYID      require last Key ID bytes to match")
-	f(i, "-e, --protect[=ASKS]   protect private key with S2K")
-	f(i, "-f, --format pgp|ssh   select key format [pgp]")
-	f(i, "-h, --help             print this help message")
-	f(i, "-i, --input FILE       read passphrase from file")
-	f(i, "-l, --load FILE        load key from file instead of generating")
-	f(i, "-n, --now              use current time as creation date")
-	f(i, "--pinentry[=CMD]       use pinentry to read the passphrase")
-	f(i, "-p, --public           only output the public key")
-	f(i, "-r, --repeat N         number of repeated passphrase prompts")
-	f(i, "-s, --subkey           also output an encryption subkey")
-	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
-	f(i, "-u, --uid USERID       user ID for the key")
-	f(i, "-v, --verbose          print additional information")
-	f(i, "--version              print version information")
-	f(i, "-x, --expires[=SPEC]   set key expiration time ["+defaultExpires+"]")
+	f(i, "-a, --armor               encode output in ASCII armor")
+	f(i, "-c, --check KEYID         require last Key ID bytes to match")
+	f(i, "-e, --protect[=ASKS]      protect private key with S2K")
+	f(i, "-f, --format pgp|ssh|tls  select key format [pgp]")
+	f(i, "-h, --help                print this help message")
+	f(i, "-i, --input FILE          read passphrase from file")
+	f(i, "-l, --load FILE           load key from file instead of generating")
+	f(i, "-n, --now                 use current time as creation date")
+	f(i, "--pinentry[=CMD]          use pinentry to read the passphrase")
+	f(i, "-p, --public              only output the public key")
+	f(i, "-r, --repeat N            number of repeated passphrase prompts")
+	f(i, "-s, --subkey              also output an encryption subkey")
+	f(i, "-t, --time SECONDS        key creation date (unix epoch seconds)")
+	f(i, "-u, --uid USERID          user ID for the key")
+	f(i, "-v, --verbose             print additional information")
+	f(i, "--version                 print version information")
+	f(i, "-x, --expires[=SPEC]      set key expiration time ["+defaultExpires+"]")
 	bw.Flush()
 }
 
@@ -262,6 +268,8 @@ func parse() *config {
 				conf.format = formatPGP
 			case "ssh":
 				conf.format = formatSSH
+			case "tls":
+				conf.format = formatTLS
 			default:
 				fatal("invalid format: %s", result.Optarg)
 			}
@@ -527,6 +535,8 @@ func main() {
 			ck.outputPGP(config)
 		case formatSSH:
 			ck.outputSSH(config)
+		case formatTLS:
+			ck.outputTLS(config)
 		}
 
 	case cmdSign:
@@ -706,6 +716,56 @@ func (k *completeKey) outputSSH(config *config) {
 	if _, err := os.Stdout.Write(b); err != nil {
 		fatal("%s", err)
 	}
+}
+
+func (k *completeKey) outputTLS(config *config) {
+	key := k.key
+	uid := string(k.userid.ID)
+
+	// x509 certificate accepts smaller range than time.Time can represent.
+	// Attempt to use value outside of accepted range results in
+	//
+	// asn1: structure error: cannot represent time as GeneralizedTime
+	//
+	// originating from src/encoding/asn1/marshal.go
+	expires := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+
+	template := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: uid},
+		NotBefore:             time.Unix(0, 0),
+		NotAfter:              expires,
+		BasicConstraintsValid: true,
+	}
+
+	zero, err := os.Open("/dev/zero")
+	if err != nil {
+		fatal("Failed to open /dev/zero: %s", err)
+	}
+
+	pubkey := ed25519.PublicKey(key.Pubkey())
+
+	derBytes, err := x509.CreateCertificate(zero, &template, &template, pubkey, key.Key)
+	if err != nil {
+		fatal("Failed to create TLS certificate: %s", err)
+	}
+
+	out := &bytes.Buffer{}
+	stdpem.Encode(out, &stdpem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	fmt.Println(out.String())
+	out.Reset()
+
+	if config.public {
+		return /* Do not output private part */
+	}
+
+	pkey, err := x509.MarshalPKCS8PrivateKey(key.Key)
+	if err != nil {
+		fatal("Failed to marshal private key: %s", err)
+	}
+
+	stdpem.Encode(out, &stdpem.Block{Type: "PRIVATE KEY", Bytes: pkey})
+	fmt.Println(out.String())
 }
 
 func parsePackets(filename string) ([]openpgp.Packet, error) {
