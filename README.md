@@ -64,31 +64,31 @@ Use `--help` (`-h`) for a full option listing:
 ```
 Usage:
    passphrase2pgp <-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]
-       -K [-anps] [-e[n]] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]
+       -K [-anps] [-e[n]] [-f pgp|ssh|x509] [-r n] [-t secs] [-x[spec]]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
 Commands:
-   -K, --key              output a key (default)
-   -S, --sign             output detached signatures
-   -T, --clearsign        output a cleartext signature
+   -K, --key                 output a key (default)
+   -S, --sign                output detached signatures
+   -T, --clearsign           output a cleartext signature
 Options:
-   -a, --armor            encode output in ASCII armor
-   -c, --check KEYID      require last Key ID bytes to match
-   -e, --protect[=ASKS]   protect private key with S2K
-   -f, --format pgp|ssh   select key format [pgp]
-   -h, --help             print this help message
-   -i, --input FILE       read passphrase from file
-   -l, --load FILE        load key from file instead of generating
-   -n, --now              use current time as creation date
-   --pinentry[=CMD]       use pinentry to read the passphrase
-   -p, --public           only output the public key
-   -r, --repeat N         number of repeated passphrase prompts
-   -s, --subkey           also output an encryption subkey
-   -t, --time SECONDS     key creation date (unix epoch seconds)
-   -u, --uid USERID       user ID for the key
-   -v, --verbose          print additional information
-   --version              print version information
-   -x, --expires[=SPEC]   set key expiration time [2y]
+   -a, --armor               encode output in ASCII armor
+   -c, --check KEYID         require last Key ID bytes to match
+   -e, --protect[=ASKS]      protect private key with S2K
+   -f, --format pgp|ssh|x509 select key format [pgp]
+   -h, --help                print this help message
+   -i, --input FILE          read passphrase from file
+   -l, --load FILE           load key from file instead of generating
+   -n, --now                 use current time as creation date
+   --pinentry[=CMD]          use pinentry to read the passphrase
+   -p, --public              only output the public key
+   -r, --repeat N            number of repeated passphrase prompts
+   -s, --subkey              also output an encryption subkey
+   -t, --time SECONDS        key creation date (unix epoch seconds)
+   -u, --uid USERID          user ID for the key
+   -v, --verbose             print additional information
+   --version                 print version information
+   -x, --expires[=SPEC]      set key expiration [2y]
 ```
 
 Per the OpenPGP specification, **the Key ID is a hash over both the key

@@ -5,10 +5,15 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	stdpem "encoding/pem"
 	"fmt"
 	"io"
 	"io/ioutil"
+	"math/big"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/ed25519"
 	"nullprogram.com/x/optparse"
 	"nullprogram.com/x/passphrase2pgp/openpgp"
 )
@@ -33,6 +39,7 @@ const (
 
 	formatPGP = iota
 	formatSSH
+	formatX509
 )
 
 var version = "1.1.0"
@@ -131,31 +138,31 @@ func usage(w io.Writer) {
 	}
 	f("Usage:")
 	f(i, p, "<-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]")
-	f(b, "-K [-anps] [-e[n]] [-f pgp|ssh] [-r n] [-t secs] [-x[spec]]")
+	f(b, "-K [-anps] [-e[n]] [-f pgp|ssh|x509] [-r n] [-t secs] [-x[spec]]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
-	f(i, "-K, --key              output a key (default)")
-	f(i, "-S, --sign             output detached signatures")
-	f(i, "-T, --clearsign        output a cleartext signature")
+	f(i, "-K, --key                 output a key (default)")
+	f(i, "-S, --sign                output detached signatures")
+	f(i, "-T, --clearsign           output a cleartext signature")
 	f("Options:")
-	f(i, "-a, --armor            encode output in ASCII armor")
-	f(i, "-c, --check KEYID      require last Key ID bytes to match")
-	f(i, "-e, --protect[=ASKS]   protect private key with S2K")
-	f(i, "-f, --format pgp|ssh   select key format [pgp]")
-	f(i, "-h, --help             print this help message")
-	f(i, "-i, --input FILE       read passphrase from file")
-	f(i, "-l, --load FILE        load key from file instead of generating")
-	f(i, "-n, --now              use current time as creation date")
-	f(i, "--pinentry[=CMD]       use pinentry to read the passphrase")
-	f(i, "-p, --public           only output the public key")
-	f(i, "-r, --repeat N         number of repeated passphrase prompts")
-	f(i, "-s, --subkey           also output an encryption subkey")
-	f(i, "-t, --time SECONDS     key creation date (unix epoch seconds)")
-	f(i, "-u, --uid USERID       user ID for the key")
-	f(i, "-v, --verbose          print additional information")
-	f(i, "--version              print version information")
-	f(i, "-x, --expires[=SPEC]   set key expiration time ["+defaultExpires+"]")
+	f(i, "-a, --armor               encode output in ASCII armor")
+	f(i, "-c, --check KEYID         require last Key ID bytes to match")
+	f(i, "-e, --protect[=ASKS]      protect private key with S2K")
+	f(i, "-f, --format pgp|ssh|x509 select key format [pgp]")
+	f(i, "-h, --help                print this help message")
+	f(i, "-i, --input FILE          read passphrase from file")
+	f(i, "-l, --load FILE           load key from file instead of generating")
+	f(i, "-n, --now                 use current time as creation date")
+	f(i, "--pinentry[=CMD]          use pinentry to read the passphrase")
+	f(i, "-p, --public              only output the public key")
+	f(i, "-r, --repeat N            number of repeated passphrase prompts")
+	f(i, "-s, --subkey              also output an encryption subkey")
+	f(i, "-t, --time SECONDS        key creation date (unix epoch seconds)")
+	f(i, "-u, --uid USERID          user ID for the key")
+	f(i, "-v, --verbose             print additional information")
+	f(i, "--version                 print version information")
+	f(i, "-x, --expires[=SPEC]      set key expiration ["+defaultExpires+"]")
 	bw.Flush()
 }
 
@@ -262,6 +269,8 @@ func parse() *config {
 				conf.format = formatPGP
 			case "ssh":
 				conf.format = formatSSH
+			case "x509":
+				conf.format = formatX509
 			default:
 				fatal("invalid format: %s", result.Optarg)
 			}
@@ -527,6 +536,8 @@ func main() {
 			ck.outputPGP(config)
 		case formatSSH:
 			ck.outputSSH(config)
+		case formatX509:
+			ck.outputX509(config)
 		}
 
 	case cmdSign:
@@ -704,6 +715,56 @@ func (k *completeKey) outputSSH(config *config) {
 	}
 	b := pubSSH(pubkey, uid)
 	if _, err := os.Stdout.Write(b); err != nil {
+		fatal("%s", err)
+	}
+}
+
+func (k *completeKey) outputX509(config *config) {
+	key := k.key
+	uid := string(k.userid.ID)
+
+	// Serial Number is a truncated SHA-256 digest of the public key.
+	h := sha256.New()
+	h.Write(key.Pubkey())
+	var serial big.Int
+	serial.SetBytes(h.Sum(nil)[:16])
+
+	// x509 certificate accepts smaller range than time.Time can represent.
+	// Attempt to use value outside of accepted range results in
+	//
+	// asn1: structure error: cannot represent time as GeneralizedTime
+	//
+	// originating from src/encoding/asn1/marshal.go
+	expires := time.Date(9999, 12, 31, 23, 59, 59, 999999999, time.UTC)
+	if e := key.Expires(); e != 0 {
+		expires = time.Unix(e, 0)
+	}
+
+	tl := x509.Certificate{
+		SerialNumber:          &serial,
+		Subject:               pkix.Name{CommonName: uid},
+		NotBefore:             time.Unix(key.Created(), 0),
+		NotAfter:              expires,
+		BasicConstraintsValid: true,
+	}
+	pubkey := ed25519.PublicKey(key.Pubkey())
+	derBytes, err := x509.CreateCertificate(nil, &tl, &tl, pubkey, key.Key)
+	if err != nil {
+		fatal("invalid x509 certificate: %s", err)
+	}
+
+	var out bytes.Buffer
+	stdpem.Encode(&out, &stdpem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+
+	if !config.public {
+		pkey, err := x509.MarshalPKCS8PrivateKey(key.Key)
+		if err != nil {
+			fatal("invalid private key: %s", err)
+		}
+		stdpem.Encode(&out, &stdpem.Block{Type: "PRIVATE KEY", Bytes: pkey})
+	}
+
+	if _, err := os.Stdout.Write(out.Bytes()); err != nil {
 		fatal("%s", err)
 	}
 }
