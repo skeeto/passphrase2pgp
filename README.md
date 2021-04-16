@@ -15,6 +15,7 @@ See also: [Long Key ID Collider][long]
 
 [argon2]: https://github.com/P-H-C/phc-winner-argon2
 [rfc8032]: https://tools.ietf.org/html/rfc8032
+[dw]: https://en.wikipedia.org/wiki/Diceware
 [blog]: https://nullprogram.com/blog/2019/07/10/
 [long]: https://github.com/skeeto/pgpcollider
 
