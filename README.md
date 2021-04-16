@@ -9,22 +9,18 @@ reproduce the original keys.
 The keys are derived from the passphrase and User ID (as salt) using
 [Argon2id][argon2] (memory=1GB and time=8) and [RFC 8032][rfc8032]. It's
 aggressive enough to protect from offline brute force attacks
-passphrases short enough to be memorable by humans. Always use [a strong
-passphrase][dw].
-
-Requires Go 1.9 or later.
+passphrases short enough to be [memorable by humans][dw].
 
 See also: [Long Key ID Collider][long]
 
 [argon2]: https://github.com/P-H-C/phc-winner-argon2
 [rfc8032]: https://tools.ietf.org/html/rfc8032
-[dw]: https://en.wikipedia.org/wiki/Diceware
 [blog]: https://nullprogram.com/blog/2019/07/10/
 [long]: https://github.com/skeeto/pgpcollider
 
 ## Installation
 
-    $ GO111MODULE=on go get nullprogram.com/x/passphrase2pgp
+    $ go install nullprogram.com/x/passphrase2pgp@latest
 
 ## Usage
 
