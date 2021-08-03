@@ -3,6 +3,7 @@ package openpgp
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/binary"
@@ -10,8 +11,6 @@ import (
 	"hash"
 	"io"
 	"time"
-
-	"golang.org/x/crypto/ed25519"
 )
 
 const (

@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -21,7 +22,6 @@ import (
 	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
-	"golang.org/x/crypto/ed25519"
 	"nullprogram.com/x/optparse"
 	"nullprogram.com/x/passphrase2pgp/openpgp"
 )
