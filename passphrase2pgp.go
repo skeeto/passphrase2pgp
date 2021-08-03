@@ -111,7 +111,6 @@ type config struct {
 	check    []byte
 	protect  bool
 	format   int
-	help     bool
 	input    string
 	load     string
 	pinentry string

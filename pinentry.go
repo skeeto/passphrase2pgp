@@ -32,20 +32,20 @@ type pinentry struct {
 // Return a handle for a newly initialized pinentry process.
 func runPinentry(command string) *pinentry {
 	pe := new(pinentry)
-	cmd := exec.Command(command)
-	in, err := cmd.StdinPipe()
+	pe.cmd = exec.Command(command)
+	in, err := pe.cmd.StdinPipe()
 	if err != nil {
 		pe.err = err
 		return pe
 	}
 	pe.in = in
-	out, err := cmd.StdoutPipe()
+	out, err := pe.cmd.StdoutPipe()
 	if err != nil {
 		pe.err = err
 		return pe
 	}
 	pe.out = bufio.NewScanner(out)
-	if err := cmd.Start(); err != nil {
+	if err := pe.cmd.Start(); err != nil {
 		pe.err = err
 		return pe
 	}
