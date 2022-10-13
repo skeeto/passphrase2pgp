@@ -23,6 +23,8 @@ See also: [Long Key ID Collider][long]
 
     $ go install nullprogram.com/x/passphrase2pgp@latest
 
+Remember to add `$(go env GOPATH)/bin` (or `$GOBIN`) to your `$PATH`.
+
 ## Usage
 
 Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
