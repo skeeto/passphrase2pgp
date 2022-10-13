@@ -23,6 +23,10 @@ See also: [Long Key ID Collider][long]
 
     $ go install nullprogram.com/x/passphrase2pgp@latest
 
+If the command can't be found, add Go's default path to executables as an environmental variable:
+
+    $ echo 'export PATH="~/go/bin:$PATH"' >> ~/.bashrc
+
 ## Usage
 
 Quick start: Provide a user ID (`-u`) and pipe the output into GnuPG.
