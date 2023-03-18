@@ -63,7 +63,7 @@ Use `--help` (`-h`) for a full option listing:
 ```
 Usage:
    passphrase2pgp <-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]
-       -K [-anps] [-e[n]] [-f pgp|ssh|x509] [-r n] [-t secs] [-x[spec]]
+       -K [-anps] [-e[n]] [-f pgp|ssh|x509|signify] [-r n] [-t secs] [-x[spec]]
        -S [-a] [-r n] [files...]
        -T [-r n] >doc-signed.txt <doc.txt
 Commands:
@@ -74,7 +74,7 @@ Options:
    -a, --armor               encode output in ASCII armor
    -c, --check KEYID         require last Key ID bytes to match
    -e, --protect[=ASKS]      protect private key with S2K
-   -f, --format pgp|ssh|x509 select key format [pgp]
+   -f, --format FORMAT       select key format [pgp]
    -h, --help                print this help message
    -i, --input FILE          read passphrase from file
    -l, --load FILE           load key from file instead of generating
