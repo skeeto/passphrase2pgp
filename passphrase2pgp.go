@@ -728,18 +728,10 @@ func (k *completeKey) outputSSH(config *config) {
 func (k *completeKey) outputSignify(config *config) {
 	key := k.key
 
-	// Choice of how to convert userid into keynum and salt is pretty
-	// arbitrary, but it must NEVER change in future, or users won't be
-	// able to regenerate their keys on upgrade of passphrase2pgp(1).
-	//
-	// I chose Sum512_224 because it produces 28 bytes long hash, and we
-	// have 24 bytes in keynum + salt, so it feels like less of randomness
-	// is wasted. I don't have any proofs that it is good thing, though.
-	//   2023-03-18, ~kaction
+	pubkeyHash := sha512.Sum512([]byte(key.Pubkey()))
+	keynum := pubkeyHash[0:8]
 
-	useridHash := sha512.Sum512_224(k.userid.ID)
-	keynum := useridHash[0:8]
-	salt := useridHash[8:24]
+	salt := pubkeyHash[8:24]
 	output := bufio.NewWriter(os.Stdout)
 
 	// https://github.com/aperezdc/signify/blob/7960f78/signify.c#L62
