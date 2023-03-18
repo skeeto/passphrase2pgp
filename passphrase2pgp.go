@@ -7,8 +7,10 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/base64"
 	"encoding/hex"
 	stdpem "encoding/pem"
 	"fmt"
@@ -40,6 +42,7 @@ const (
 	formatPGP = iota
 	formatSSH
 	formatX509
+	formatSignify
 )
 
 var version = "1.2.0"
@@ -137,7 +140,7 @@ func usage(w io.Writer) {
 	}
 	f("Usage:")
 	f(i, p, "<-u id|-l key> [-hv] [-c id] [-i pwfile] [--pinentry[=cmd]]")
-	f(b, "-K [-anps] [-e[n]] [-f pgp|ssh|x509] [-r n] [-t secs] [-x[spec]]")
+	f(b, "-K [-anps] [-e[n]] [-f pgp|ssh|x509|signify] [-r n] [-t secs] [-x[spec]]")
 	f(b, "-S [-a] [-r n] [files...]")
 	f(b, "-T [-r n] >doc-signed.txt <doc.txt")
 	f("Commands:")
@@ -148,7 +151,7 @@ func usage(w io.Writer) {
 	f(i, "-a, --armor               encode output in ASCII armor")
 	f(i, "-c, --check KEYID         require last Key ID bytes to match")
 	f(i, "-e, --protect[=ASKS]      protect private key with S2K")
-	f(i, "-f, --format pgp|ssh|x509 select key format [pgp]")
+	f(i, "-f, --format pgp|ssh|x509|signify select key format [pgp]")
 	f(i, "-h, --help                print this help message")
 	f(i, "-i, --input FILE          read passphrase from file")
 	f(i, "-l, --load FILE           load key from file instead of generating")
@@ -270,6 +273,8 @@ func parse() *config {
 				conf.format = formatSSH
 			case "x509":
 				conf.format = formatX509
+			case "signify":
+				conf.format = formatSignify
 			default:
 				fatal("invalid format: %s", result.Optarg)
 			}
@@ -537,6 +542,8 @@ func main() {
 			ck.outputSSH(config)
 		case formatX509:
 			ck.outputX509(config)
+		case formatSignify:
+			ck.outputSignify(config)
 		}
 
 	case cmdSign:
@@ -714,6 +721,58 @@ func (k *completeKey) outputSSH(config *config) {
 	}
 	b := pubSSH(pubkey, uid)
 	if _, err := os.Stdout.Write(b); err != nil {
+		fatal("%s", err)
+	}
+}
+
+func (k *completeKey) outputSignify(config *config) {
+	key := k.key
+
+	// Choice of how to convert userid into keynum and salt is pretty
+	// arbitrary, but it must NEVER change in future, or users won't be
+	// able to regenerate their keys on upgrade of passphrase2pgp(1).
+	//
+	// I chose Sum512_224 because it produces 28 bytes long hash, and we
+	// have 24 bytes in keynum + salt, so it feels like less of randomness
+	// is wasted. I don't have any proofs that it is good thing, though.
+	//   2023-03-18, ~kaction
+
+	useridHash := sha512.Sum512_224(k.userid.ID)
+	keynum := useridHash[0:8]
+	salt := useridHash[8:24]
+	output := bufio.NewWriter(os.Stdout)
+
+	// https://github.com/aperezdc/signify/blob/7960f78/signify.c#L62
+	output.WriteString("untrusted comment: signify public key for ")
+	output.Write(k.userid.ID)
+	output.WriteRune('\n')
+	pubkey := base64.NewEncoder(base64.StdEncoding, output)
+	pubkey.Write([]byte("Ed"))
+	pubkey.Write(keynum)
+	pubkey.Write(key.Pubkey())
+	pubkey.Close()
+	output.WriteRune('\n')
+
+	if !config.public {
+		hash := sha512.Sum512(key.Key)
+
+		// https://github.com/aperezdc/signify/blob/7960f78/signify.c#L52
+		output.WriteString("untrusted comment: signify private key for ")
+		output.Write(k.userid.ID)
+		output.WriteRune('\n')
+		privkey := base64.NewEncoder(base64.StdEncoding, output)
+		privkey.Write([]byte("Ed"))       // pkalg
+		privkey.Write([]byte("BK"))       // kdfalg
+		privkey.Write([]byte{0, 0, 0, 0}) // kdfrounds
+		privkey.Write(salt)               // salt
+		privkey.Write(hash[0:8])          // checksum
+		privkey.Write(keynum)             // keynum
+		privkey.Write(key.Key)            // seckey (64 bytes)
+		privkey.Close()
+		output.WriteRune('\n')
+	}
+
+	if err := output.Flush(); err != nil {
 		fatal("%s", err)
 	}
 }
