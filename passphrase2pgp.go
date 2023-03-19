@@ -6,11 +6,13 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	stdpem "encoding/pem"
 	"fmt"
@@ -29,9 +31,10 @@ import (
 )
 
 const (
-	kdfTime   = 8
-	kdfMemory = 1024 * 1024 // 1 GB
-	sshRounds = 64          // bcrypt_pbkdf rounds
+	kdfTime       = 8
+	kdfMemory     = 1024 * 1024 // 1 GB
+	sshRounds     = 64          // bcrypt_pbkdf rounds
+	signifyRounds = 42          // bcrypt_pbkdf rounds
 
 	defaultExpires = "2y"
 
@@ -728,10 +731,8 @@ func (k *completeKey) outputSSH(config *config) {
 func (k *completeKey) outputSignify(config *config) {
 	key := k.key
 
-	pubkeyHash := sha512.Sum512([]byte(key.Pubkey()))
+	pubkeyHash := sha512.Sum512(key.Pubkey())
 	keynum := pubkeyHash[0:8]
-
-	salt := pubkeyHash[8:24]
 	output := bufio.NewWriter(os.Stdout)
 
 	// https://github.com/aperezdc/signify/blob/7960f78/signify.c#L62
@@ -747,19 +748,36 @@ func (k *completeKey) outputSignify(config *config) {
 
 	if !config.public {
 		hash := sha512.Sum512(key.Key)
+		keyout := key.Key
+		var salt [16]byte
+		var enckey [64]byte
+		var kdfrounds [4]byte
+
+		if config.protect {
+			if _, err := rand.Read(salt[:]); err != nil {
+				panic(err)
+			}
+			password := getProtect(config)
+			xor := bcryptPBKDF(password, salt[:], len(enckey), signifyRounds)
+			for i := 0; i < len(enckey); i++ {
+				enckey[i] = key.Key[i] ^ xor[i]
+			}
+			keyout = enckey[:]
+			binary.BigEndian.PutUint32(kdfrounds[:], signifyRounds)
+		}
 
 		// https://github.com/aperezdc/signify/blob/7960f78/signify.c#L52
 		output.WriteString("untrusted comment: signify private key for ")
 		output.Write(k.userid.ID)
 		output.WriteRune('\n')
 		privkey := base64.NewEncoder(base64.StdEncoding, output)
-		privkey.Write([]byte("Ed"))       // pkalg
-		privkey.Write([]byte("BK"))       // kdfalg
-		privkey.Write([]byte{0, 0, 0, 0}) // kdfrounds
-		privkey.Write(salt)               // salt
-		privkey.Write(hash[0:8])          // checksum
-		privkey.Write(keynum)             // keynum
-		privkey.Write(key.Key)            // seckey (64 bytes)
+		privkey.Write([]byte("Ed")) // pkalg
+		privkey.Write([]byte("BK")) // kdfalg
+		privkey.Write(kdfrounds[:]) // kdfrounds
+		privkey.Write(salt[:])      // salt
+		privkey.Write(hash[:8])     // checksum
+		privkey.Write(keynum)       // keynum
+		privkey.Write(keyout)       // seckey (64 bytes)
 		privkey.Close()
 		output.WriteRune('\n')
 	}
