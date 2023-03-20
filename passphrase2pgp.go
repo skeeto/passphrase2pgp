@@ -48,7 +48,7 @@ const (
 	formatSignify
 )
 
-var version = "1.2.0"
+var version = "1.3.0"
 
 // Print the message like fmt.Printf() and then os.Exit(1).
 func fatal(format string, args ...interface{}) {
