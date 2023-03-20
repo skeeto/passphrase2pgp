@@ -347,6 +347,15 @@ install a non-emergency key as a new authorized key:
     $ passphrase2pgp -u emergency -f ssh | ssh-add -
     $ ssh-copy-id -i ~/.ssh/id_ed25519 important.example.com
 
+## Other formats
+
+The `--format` option also supports:
+
+* `x509`: self-signed TLS certificates (`--protect` unsupported)
+* `signify`: [OpenBSD `signify(1)`][signify] keys, including `--protect`
+
+[signify]: https://man.openbsd.org/signify
+
 ## Justification
 
 Isn't generating a key from a passphrase foolish? If you can reproduce
